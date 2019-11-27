@@ -1,0 +1,16 @@
+*.class
+*.log
+/.project
+
+bin/
+project/boot/
+project/plugins/project/
+target/
+build/
+
+build
+.classpath
+.project
+.settings
+.worksheet
+
