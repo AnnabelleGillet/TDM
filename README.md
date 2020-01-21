@@ -28,7 +28,7 @@ Third, TDM library connects to multiple data sources using a polystore architect
 
 
 # How to use TDM library
-* Put the jar in the `lib` directory, at the root of your Scala project.
+* Put the [jar](https://github.com/AnnabelleGillet/TDM/releases) in the `lib` directory, at the root of your Scala project.
 * Import the TDM functionnalities with 
 ```
 import tdm._
