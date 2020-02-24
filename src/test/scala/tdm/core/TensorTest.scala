@@ -22,7 +22,7 @@ class TensorTest extends FlatSpec with Matchers {
 	    tensor.addValue(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1))(1.0)
     }
     
-    it should "retrieve added value" in {
+    it should "retrieve added value of a Tensor of type Double" in {
     	object Dimension1 extends TensorDimension[String]
     	object Dimension2 extends TensorDimension[String]
     	object Dimension3 extends TensorDimension[Long]
@@ -36,6 +36,126 @@ class TensorTest extends FlatSpec with Matchers {
 	    tensor.addValue(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1))(1.0)
 	    
 	    tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)) shouldBe Some(1.0)
+    	tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)).get.isInstanceOf[Double] shouldBe true
+    }
+    
+    it should "retrieve added value of a Tensor of type Float" in {
+    	object Dimension1 extends TensorDimension[String]
+    	object Dimension2 extends TensorDimension[String]
+    	object Dimension3 extends TensorDimension[Long]
+		
+		val tensor = TensorBuilder[Float]
+	        .addDimension(Dimension1)
+	        .addDimension(Dimension2)
+	        .addDimension(Dimension3)
+	        .build()
+	        
+	    tensor.addValue(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1))(1.0f)
+	    
+	    tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)) shouldBe Some(1.0f)
+    	tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)).get.isInstanceOf[Float] shouldBe true
+    }
+    
+    it should "retrieve added value of a Tensor of type Long" in {
+    	object Dimension1 extends TensorDimension[String]
+    	object Dimension2 extends TensorDimension[String]
+    	object Dimension3 extends TensorDimension[Long]
+		
+		val tensor = TensorBuilder[Long]
+	        .addDimension(Dimension1)
+	        .addDimension(Dimension2)
+	        .addDimension(Dimension3)
+	        .build()
+	        
+	    tensor.addValue(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1))(1L)
+	    
+	    tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)) shouldBe Some(1L)
+    	tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)).get.isInstanceOf[Long] shouldBe true
+    }
+    
+    it should "retrieve added value of a Tensor of type Int" in {
+    	object Dimension1 extends TensorDimension[String]
+    	object Dimension2 extends TensorDimension[String]
+    	object Dimension3 extends TensorDimension[Long]
+		
+		val tensor = TensorBuilder[Int]
+	        .addDimension(Dimension1)
+	        .addDimension(Dimension2)
+	        .addDimension(Dimension3)
+	        .build()
+	        
+	    tensor.addValue(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1))(1)
+	    
+	    tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)) shouldBe Some(1)
+    	tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)).get.isInstanceOf[Int] shouldBe true
+    }
+    
+    it should "retrieve added value of a Tensor of type Short" in {
+    	object Dimension1 extends TensorDimension[String]
+    	object Dimension2 extends TensorDimension[String]
+    	object Dimension3 extends TensorDimension[Long]
+		
+		val tensor = TensorBuilder[Short]
+	        .addDimension(Dimension1)
+	        .addDimension(Dimension2)
+	        .addDimension(Dimension3)
+	        .build()
+	        
+	    tensor.addValue(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1))(1)
+	    
+	    tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)) shouldBe Some(1)
+    	tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)).get.isInstanceOf[Short] shouldBe true
+    }
+    
+    it should "retrieve added value of a Tensor of type Byte" in {
+    	object Dimension1 extends TensorDimension[String]
+    	object Dimension2 extends TensorDimension[String]
+    	object Dimension3 extends TensorDimension[Long]
+		
+		val tensor = TensorBuilder[Byte]
+	        .addDimension(Dimension1)
+	        .addDimension(Dimension2)
+	        .addDimension(Dimension3)
+	        .build()
+	        
+	    tensor.addValue(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1))(1)
+	    
+	    tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)) shouldBe Some(1)
+    	tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)).get.isInstanceOf[Byte] shouldBe true
+    }
+    
+    it should "retrieve added value of a Tensor of type Boolean" in {
+    	object Dimension1 extends TensorDimension[String]
+    	object Dimension2 extends TensorDimension[String]
+    	object Dimension3 extends TensorDimension[Long]
+		
+		val tensor = TensorBuilder[Boolean]
+	        .addDimension(Dimension1)
+	        .addDimension(Dimension2)
+	        .addDimension(Dimension3)
+	        .build()
+	        
+	    tensor.addValue(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1))(true)
+	    
+	    tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)) shouldBe Some(true)
+    	tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)).get.isInstanceOf[Boolean] shouldBe true
+    }
+    
+    it should "retrieve added value of a Tensor of type String" in {
+    	object Dimension1 extends TensorDimension[String]
+    	object Dimension2 extends TensorDimension[String]
+    	object Dimension3 extends TensorDimension[Long]
+		
+		val tensor = TensorBuilder[String]
+	        .addDimension(Dimension1)
+	        .addDimension(Dimension2)
+	        .addDimension(Dimension3)
+	        .build()
+	        
+	    tensor.addValue(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1))("10")
+	    
+	    tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)) shouldBe Some("10")
+    	tensor(Dimension1.value("d1"), Dimension2.value("d2"), Dimension3.value(1)).get.isInstanceOf[String] shouldBe true
     }
     
     it should "retrieve added value in different dimension order" in {

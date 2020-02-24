@@ -3,11 +3,16 @@ package test.tdm.core
 import org.scalatest._
 
 import shapeless.test.illTyped
+import org.apache.spark.sql.SparkSession
 
 import tdm._
 import tdm.core._
 
-class TensorBuilderTest extends FlatSpec with Matchers {    
+class TensorBuilderTest extends FlatSpec with Matchers {  
+	
+	val sparkSession = SparkSession.builder().master("local[4]").getOrCreate()
+	sparkSession.sparkContext.setLogLevel("ERROR")
+	
     "A TensorBuilder" should "compile with Double" in {
 		TensorBuilder[Double]
 	}
@@ -34,10 +39,6 @@ class TensorBuilderTest extends FlatSpec with Matchers {
 	
 	it should "compile with Boolean" in {
 		TensorBuilder[Boolean]
-	}
-	
-	it should "compile with Char" in {
-		TensorBuilder[Char]
 	}
 	
 	it should "compile with String" in {
@@ -120,7 +121,7 @@ class TensorBuilderTest extends FlatSpec with Matchers {
 	        .addDimension(Dimension1)
     	  """)
     	  
-    	  illTyped("""
+    	illTyped("""
     	  val tensor = TensorBuilder[Double]
 	        .addDimension(Dimension1)
 	        .addDimension(Dimension2)

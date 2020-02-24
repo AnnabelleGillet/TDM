@@ -2,43 +2,46 @@ package tdm.core
 
 import java.sql.{Connection, Statement, ResultSet}
 
+import java.util.Properties
+
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
+import org.apache.spark.sql.functions.{typedLit, udf}
+import org.apache.spark.sql.types._
+
 import scala.collection.mutable.Map
+import scala.reflect.runtime.universe.TypeTag
 
 import shapeless.{HList, HMap, HNil, ::}
-import shapeless.BasisConstraint
+import shapeless.{BasisConstraint, IsDistinctConstraint}
 import shapeless.ops.hlist.{Partition, Reverse, Tupler, Union}
 import shapeless.ops.product.ToHList
 
 import tdm._
 import tdm.ContainsConstraint._
 
-class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: HList] private[core]
+class Tensor[T, DL <: HList] private[core]
         (val typeList: List[TensorDimension[_]], val dimensions: HMap[DimensionMap])
         (implicit tensorTypeAuthorized: AuthorizedType[T]) {
-        
-	private[core] def this(connection: Connection, query: String, tensorValueName: String, dimensionsName: scala.collection.immutable.Map[TensorDimension[_], String], typeList: List[TensorDimension[_]], dimensions: HMap[DimensionMap])
+    
+	private var values: DataFrame = Tensor.sparkSession.emptyDataFrame
+	private var empty: Boolean = true
+	
+	private[core] def this(connectionProperties: Properties, query: String, tensorValueName: String, dimensionsName: scala.collection.immutable.Map[TensorDimension[_], String], typeList: List[TensorDimension[_]], dimensions: HMap[DimensionMap])
             (implicit tensorTypeAuthorized: AuthorizedType[T]) = {
 		this(typeList, dimensions)
-		val stmt: Statement = connection.createStatement()
-		val rs: ResultSet = stmt.executeQuery(query)
+
+		val jdbcReader = Tensor.sparkSession.read.format("jdbc")
+		connectionProperties.forEach((key, value) => jdbcReader.option(key.toString, value.toString))
+		values = jdbcReader.option("query", query).load()
+
+		// Convert dimensions' values to indexes
+		for ((dimension, name) <- dimensionsName.iterator) {
+			values = values.withColumnRenamed(name, dimension.name)
+        }
 		
-		while (rs.next()) {
-			val keyArray = new Array[String](typeList.size)
-            for ((dimension, name) <- dimensionsName.iterator) {
-            	val value: Any = rs.getObject(name)
-            	type DT = dimension.DimensionType
-            	val (associatedDimension, dimensionIndex) = addIndex((dimension, value.asInstanceOf[DT]))
-            	keyArray(typeList.indexOf(associatedDimension)) = dimensionIndex + "_"
-            }
-			val tensorValue: Any = rs.getObject(tensorValueName)
-			values.put(keyArray.mkString(""), tensorValue.asInstanceOf[T])
-		}
-		
-		rs.close
-		stmt.close
+		empty = false
+		values = values.withColumnRenamed(tensorValueName, Tensor.TENSOR_VALUES_COLUMN_NAME)
 	}
-	
-	private val values = Map[String, T]()
 	
 	/**
 	 * Get the value of the tensor for the given dimensions' values.
@@ -47,25 +50,29 @@ class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: 
 	 * 
 	 * @return Option[T]: None if the dimensions' values doesn't correspond to a tensor's value, Some(T) otherwise
 	 */
-	def apply[P1 <: Product](dimensionsValues: P1)
-		    (implicit dimensionsConstraint: ContainsAllDimensionsConstraint[P, P1, ValueList]): Option[T] = {
+	def apply[P <: Product](dimensionsValues: P)
+		    (implicit dimensionsConstraint: ContainsAllDimensionsConstraint[DL, P]): Option[T] = {
 		
-		var dimensionFound: Boolean = true
-		val keyArray = new Array[String](typeList.size)
-        for (dimensionValue <- dimensionsValues.productIterator if dimensionFound) {
-        	val dimensionIndex = getIndex(dimensionValue)
-        	if (dimensionIndex.isEmpty) {
-        		dimensionFound = false
-        	} else {
-        		val (dimension, index) = dimensionIndex.get
-        		keyArray(typeList.indexOf(dimension)) = index + "_"
-        	}
-        }
-		
-		if (dimensionFound) {
-            values.get(keyArray.mkString(""))
-		} else {
+		if (empty) {
 			None
+		} else {
+    		var dimensionFound: Boolean = true
+    		var currentDataFrame = values
+            for (dimensionValue <- dimensionsValues.productIterator if dimensionFound) {
+            	val (dimension: TensorDimension[_], value) = dimensionValue
+            	type DT = dimension.DimensionType
+            	
+            	currentDataFrame = currentDataFrame.filter(currentDataFrame.col(dimension.name) === value)
+            	if (currentDataFrame.isEmpty) {
+            		dimensionFound = false
+            	}
+            }
+    		
+    		if (dimensionFound && !currentDataFrame.isEmpty) {
+    			Some(currentDataFrame.select(Tensor.TENSOR_VALUES_COLUMN_NAME).first().get(0).asInstanceOf[T])
+    		} else {
+    			None
+    		}
 		}
 	}
 	
@@ -75,15 +82,143 @@ class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: 
 	 * @param dimensionsValues : the product of dimensions' values
 	 * @param tensorValue : the value to add to the tensor
 	 */
-	def addValue[P1 <: Product](dimensionsValues: P1)(tensorValue: T)
-	        (implicit dimensionsConstraint: ContainsAllDimensionsConstraint[P, P1, ValueList]): Unit = {
-        val newKeyArray = new Array[String](typeList.size)
+	def addValue[P <: Product](dimensionsValues: P)(tensorValue: T)
+	        (implicit dimensionsConstraint: ContainsAllDimensionsConstraint[DL, P], typeTag: TypeTag[T]): Unit = {
+        
+		import Tensor.sparkSession.implicits._
+		
+		// Convert the type of the tensor value to be accepted by the DataFrame
+        var newValue: DataFrame = Tensor.sparkSession.emptyDataFrame
+        
+        tensorValue match {
+        	case v: Double => newValue = Seq(v).toDF(Tensor.TENSOR_VALUES_COLUMN_NAME)
+        	case v: Float => newValue = Seq(v).toDF(Tensor.TENSOR_VALUES_COLUMN_NAME)
+        	case v: Long => newValue = Seq(v).toDF(Tensor.TENSOR_VALUES_COLUMN_NAME)
+        	case v: Int => newValue = Seq(v).toDF(Tensor.TENSOR_VALUES_COLUMN_NAME)
+        	case v: Short => newValue = Seq(v).toDF(Tensor.TENSOR_VALUES_COLUMN_NAME)
+        	case v: Byte => newValue = Seq(v).toDF(Tensor.TENSOR_VALUES_COLUMN_NAME)
+        	case v: Boolean => newValue = Seq(v).toDF(Tensor.TENSOR_VALUES_COLUMN_NAME)
+        	case v: String => newValue = Seq(v).toDF(Tensor.TENSOR_VALUES_COLUMN_NAME)
+        }
+		
+		// Add the dimensions' value
         for (dimensionValue <- dimensionsValues.productIterator) {
-        	val (dimension, index) = addIndex(dimensionValue)
-        	newKeyArray(typeList.indexOf(dimension)) = index + "_"
+        	
+        	val (dimension: TensorDimension[_], value) = dimensionValue
+        	type DT = dimension.DimensionType
+        	
+        	newValue = newValue.withColumn(dimension.name, typedLit(value))
         }
     	
-        values.put(newKeyArray.mkString(""), tensorValue)
+		if (empty) {
+			values = newValue
+			empty = false
+		} else {
+		    if (values.columns.size > 1) {
+			    values = values.union(newValue.select(values.columns.head, values.columns.tail:_*))
+			} else {
+				values = values.union(newValue)
+			}
+		}
+    }
+	
+	/**
+	 * Returns the number of elements of the tensor.
+	 * 
+	 */
+	def count(): Long = {
+		values.count()
+	}
+	
+	/**
+     * Selection operator for tensor.
+     * Create a tensor from the values of the current tensor that respect the given condition.
+     * 
+     * @param condition: the function to applied to the tensor's values to determine which to keep
+     * 
+     * @return a new tensor, with dimensions in the same order as the current tensor.
+     * 
+     */
+    def selection(condition: T => Boolean): Tensor[T, DL] = {
+    	// Initializing the dimensions of the new tensor
+    	var newDimensions = HMap.empty[DimensionMap]
+
+    	for (dimension <- typeList) {
+    		type DimensionType = dimension.DimensionType
+    		val newTensorDimension = dimension.asInstanceOf[TensorDimension[DimensionType]]
+    		val newDimension = dimension.produceDimension().asInstanceOf[Dimension[DimensionType]]
+    		newDimensions = newDimensions + (newTensorDimension -> newDimension)
+    	}
+    	
+    	// Intializing the new tensor
+		val tensor = new Tensor[T, DL](typeList, newDimensions)(tensorTypeAuthorized)
+		
+		// Adding values to the new tensor
+		if (!empty) {
+			val dimensionIndex: Int = values.columns.indexOf(Tensor.TENSOR_VALUES_COLUMN_NAME)
+    		tensor.values = values.filter(r => {
+    			condition(r.get(dimensionIndex).asInstanceOf[T])
+    		})
+    		tensor.empty = false
+		}
+		
+		tensor
+    }
+    
+    /**
+     * Restriction operator for tensor.
+     * Create a tensor dimensions' values of the current tensor that fit the given dimensions' condition. 
+     * 
+     * @param dimensionsRestriction: the restriction to applied on dimensions' values
+     * 
+     * @return a new tensor, with dimensions in the same order as the current tensor.
+     * 
+     */
+    def restriction[P <: Product](dimensionsRestriction: P)
+            (implicit restrictionConstraint: ContainsDimensionsConditionConstraint[DL, P]): Tensor[T, DL] = {
+    	// Initializing the dimensions of the new tensor
+    	var newDimensions = HMap.empty[DimensionMap]
+
+    	for (dimension <- typeList) {
+    		type DimensionType = dimension.DimensionType
+    		val newTensorDimension = dimension.asInstanceOf[TensorDimension[DimensionType]]
+    		val newDimension = dimension.produceDimension().asInstanceOf[Dimension[DimensionType]]
+    		newDimensions = newDimensions + (newTensorDimension -> newDimension)
+    	}
+    	
+    	// Intializing the new tensor
+		val tensor = new Tensor[T, DL](typeList, newDimensions)
+		
+		// Addin value to the new tensor
+		if (!empty) {
+			dimensionsRestriction match {
+				case (dimension: TensorDimension[_], condition) => {
+    				type DT = dimension.DimensionType
+    				val dimensionIndex: Int = values.columns.indexOf(dimension.name)
+    				val typedCondition: DT => Boolean = condition.asInstanceOf[DT => Boolean]
+    				tensor.values = values.filter(r => {
+            			typedCondition(r.get(dimensionIndex).asInstanceOf[DT])
+            		})
+    			}
+				case _ => {
+					for (dimensionRestriction <- dimensionsRestriction.productIterator) {
+            			dimensionRestriction match {
+                			case (dimension: TensorDimension[_], condition) => {
+                				type DT = dimension.DimensionType
+                				val dimensionIndex: Int = values.columns.indexOf(dimension.name)
+                				val typedCondition: DT => Boolean = condition.asInstanceOf[DT => Boolean]
+                				tensor.values = values.filter(r => {
+                        			typedCondition(r.get(dimensionIndex).asInstanceOf[DT])
+                        		})
+                			}
+                		}
+                    }
+				}
+			}
+			tensor.empty = false
+		}
+		
+		tensor
     }
     
     /**
@@ -95,12 +230,9 @@ class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: 
      * 
      * @return A tensor with the dimension parameter removed and with only the values that match the parameter value
      */
-    def projection[CT, D <: TensorDimension[_], ValueListOut <: HList, ConditionListOut <: HList, TLOut <: HList, POut <: Product, RLOut <: HList](_dimension: D)(value: CT)
-	    (implicit newTypeList: Partition.Aux[TL, D, D :: HNil, TLOut], 
-	    		newValueList: Partition.Aux[ValueList, (D, CT), (D, CT) :: HNil, ValueListOut],
-	    		newConditionList: Partition.Aux[ConditionList, (D, CT => Boolean), (D, CT => Boolean) :: HNil, ConditionListOut],
-	    		reverse: Reverse.Aux[ValueListOut, RLOut],
-	    		aux: Tupler.Aux[RLOut, POut]): Tensor[POut, T, TLOut, ValueListOut, ConditionListOut] = {
+    def projection[CT, D <: TensorDimension[_], DLOut <: HList](_dimension: D)(value: CT)
+	    (implicit newTypeList: Partition.Aux[DL, D, D :: HNil, DLOut], 
+	    		eq: _dimension.DimensionType =:= CT): Tensor[T, DLOut] = {
 		
     	// Initializing the dimensions of the new tensor
     	var newDimensions = HMap.empty[DimensionMap]
@@ -113,39 +245,17 @@ class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: 
     	}
     	
     	// Intializing the new tensor
-		val tensor = new Tensor[POut, T, TLOut, ValueListOut, ConditionListOut](typeList.filterNot(_ == _dimension), newDimensions)
+		val tensor = new Tensor[T, DLOut](typeList.filterNot(_ == _dimension), newDimensions)
 		
 		// Adding values to the new tensor
-		var dimensionIndice: Int = typeList.indexOf(_dimension)
-    	type DimensionType = _dimension.DimensionType
-    	var dimensionValueIndex: Option[Long] = dimensions
-    	        .get(_dimension.asInstanceOf[TensorDimension[DimensionType]])
-    	        .get
-    	        .getIndex(value.asInstanceOf[DimensionType])
-    	
-    	if (dimensionValueIndex.isDefined) {
-        	for (key <- values.keys) {
-        		val keySplit = key.split("_")
-        		
-        		if (keySplit(dimensionIndice) == dimensionValueIndex.get.toString) {
-        			var newKey: String = ""
-        			for (i <- 0 until typeList.size if (i != dimensionIndice)) {
-        				val currentTensorDimension = typeList(i)
-        				type CurrentDimensionType = currentTensorDimension.DimensionType
-        				val currentDimension = dimensions.get(currentTensorDimension).get.asInstanceOf[Dimension[CurrentDimensionType]]
-        				val currentDimensionValue = getValue(currentDimension, keySplit(i).toLong).get
-        				
-        				val newDimensionKey = tensor.addSimpleIndex(currentTensorDimension, currentDimensionValue)
-        				newKey += newDimensionKey + "_"
-        			}
-        			tensor.values.put(newKey, values.get(key).get)
-        		}
-        	}
-    	}
+		if (!empty) {
+		    tensor.values = values.filter(values.col(_dimension.name) === value).drop(_dimension.name)
+		    tensor.empty = false
+		}
 		
 		tensor
     }
-    
+	
     /**
      * Union operator for tensor.
      * Create a tensor from the values of the current tensor and the parameter tensor. If there are common entries for 
@@ -158,8 +268,8 @@ class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: 
      * @return a new tensor, with dimensions in the same order as the current tensor.
      * 
      */
-    def union[P2 <: Product, TL2 <: HList, ValueList2 <: HList, ConditionList2 <: HList](tensor: Tensor[P2, T, TL2, ValueList2, ConditionList2])(commonValueOperator: (T, T) => T)
-            (implicit evT1T2: BasisConstraint[ValueList2, ValueList], evT2T1: BasisConstraint[ValueList, ValueList2]): Tensor[P, T, TL, ValueList, ConditionList] = {
+    def union[DL2 <: HList](tensor: Tensor[T, DL2])(commonValueOperator: (T, T) => T)
+    	    (implicit sameSchema: SameSchemaConstraint[DL, DL2], typeTag: TypeTag[T]): Tensor[T, DL] = {
     	// Initializing the dimensions of the new tensor
     	var newDimensions = HMap.empty[DimensionMap]
 
@@ -171,49 +281,32 @@ class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: 
     	}
     	
     	// Intializing the new tensor
-		val newTensor = new Tensor[P, T, TL, ValueList, ConditionList](typeList, newDimensions)(tensorTypeAuthorized)
+		val newTensor = new Tensor[T, DL](typeList, newDimensions)(tensorTypeAuthorized)
 		
 		// Adding values to the new tensor
-		// From first tensor
-    	for (key <- values.keys) {
-    		val keySplit = key.split("_")
-    		
-			var newKey: String = ""
-			for (i <- 0 until typeList.size) {
-				val currentTensorDimension = typeList(i)
-				type CurrentDimensionType = currentTensorDimension.DimensionType
-				val currentDimension = dimensions.get(currentTensorDimension).get.asInstanceOf[Dimension[CurrentDimensionType]]
-				val currentDimensionValue = getValue(currentDimension, keySplit(i).toLong).get
-				
-				val newDimensionKey = newTensor.addSimpleIndex(currentTensorDimension, currentDimensionValue)
-				newKey += newDimensionKey + "_"
+		if (!empty && !tensor.empty) {
+			val columnsName = typeList.map(_.name)
+			newTensor.values = values.withColumnRenamed(Tensor.TENSOR_VALUES_COLUMN_NAME, "value1")
+			        .join(tensor.values.withColumnRenamed(Tensor.TENSOR_VALUES_COLUMN_NAME, "value2"), columnsName)
+			
+			val u = udf(commonValueOperator.asInstanceOf[(T, T) => T])
+			newTensor.values = newTensor.values
+                    .withColumn(Tensor.TENSOR_VALUES_COLUMN_NAME, u(newTensor.values.col("value1"), newTensor.values.col("value2")))
+			
+			newTensor.values = newTensor.values.drop("value1").drop("value2")
+			newTensor.values = newTensor.values
+			        .union(values.select(newTensor.values.columns.head, newTensor.values.columns.tail:_*).except(newTensor.values))
+			        .union(tensor.values.select(newTensor.values.columns.head, newTensor.values.columns.tail:_*).except(newTensor.values))
+			newTensor.empty = false
+		} else {
+			if (empty && !tensor.empty) {
+				newTensor.values = tensor.values
+				newTensor.empty = false
+			} else if (!empty) {
+				newTensor.values = values
+				newTensor.empty = false
 			}
-			newTensor.values.put(newKey, values.get(key).get)
-    	}
-		// From second tensor
-		for (key <- tensor.values.keys) {
-    		val keySplit = key.split("_")
-    		
-			val newKeyArray = new Array[String](tensor.typeList.size)
-			for (i <- 0 until tensor.typeList.size) {
-				val currentTensorDimension = tensor.typeList(i)
-				type CurrentDimensionType = currentTensorDimension.DimensionType
-				val currentDimension = tensor.dimensions.get(currentTensorDimension).get.asInstanceOf[Dimension[CurrentDimensionType]]
-				val currentDimensionValue = tensor.getValue(currentDimension, keySplit(i).toLong).get
-				
-				val newDimensionKey = newTensor.addSimpleIndex(currentTensorDimension, currentDimensionValue)
-				newKeyArray(newTensor.typeList.indexOf(currentTensorDimension)) = newDimensionKey + "_"
-				//newKey += newDimensionKey + "_"
-			}
-    		val newKey = newKeyArray.mkString("")
-    		// Common values
-    		val oldValue = newTensor.values.get(newKey)
-    		var newValue = tensor.values.get(key).get
-    		if (oldValue.isDefined) {
-    			newValue = commonValueOperator(oldValue.get, newValue)
-    		}
-			newTensor.values.put(newKey, newValue)
-    	}
+		}
 		
 		newTensor
     }
@@ -230,8 +323,8 @@ class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: 
      * @return a new tensor, with dimensions in the same order as the current tensor.
      * 
      */
-    def ∪[P2 <: Product, TL2 <: HList, ValueList2 <: HList, ConditionList2 <: HList](tensor: Tensor[P2, T, TL2, ValueList2, ConditionList2])(commonValueOperator: (T, T) => T)
-            (implicit evT1T2: BasisConstraint[ValueList2, ValueList], evT2T1: BasisConstraint[ValueList, ValueList2]): Tensor[P, T, TL, ValueList, ConditionList] = {
+    def ∪[DL2 <: HList](tensor: Tensor[T, DL2])(commonValueOperator: (T, T) => T)
+    	    (implicit sameSchema: SameSchemaConstraint[DL, DL2], typeTag: TypeTag[T]): Tensor[T, DL] = {
     	this.union(tensor)(commonValueOperator)
     }
     
@@ -247,8 +340,8 @@ class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: 
      * @return a new tensor, with dimensions in the same order as the current tensor.
      * 
      */
-    def intersection[P2 <: Product, TL2 <: HList, ValueList2 <: HList, ConditionList2 <: HList](tensor: Tensor[P2, T, TL2, ValueList2, ConditionList2])(valueOperator: (T, T) => T)
-            (implicit evT1T2: BasisConstraint[ValueList2, ValueList], evT2T1: BasisConstraint[ValueList, ValueList2]): Tensor[P, T, TL, ValueList, ConditionList] = {
+    def intersection[DL2 <: HList](tensor: Tensor[T, DL2])(commonValueOperator: (T, T) => T)
+    	    (implicit sameSchema: SameSchemaConstraint[DL, DL2], typeTag: TypeTag[T]): Tensor[T, DL] = {
     	// Initializing the dimensions of the new tensor
     	var newDimensions = HMap.empty[DimensionMap]
 
@@ -260,49 +353,21 @@ class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: 
     	}
     	
     	// Intializing the new tensor
-		val newTensor = new Tensor[P, T, TL, ValueList, ConditionList](typeList, newDimensions)(tensorTypeAuthorized)
+		val newTensor = new Tensor[T, DL](typeList, newDimensions)(tensorTypeAuthorized)
 
 		// Adding values to the new tensor
-		for (key <- values.keys) {
-    		val keySplit = key.split("_")
-    		
-    		// Getting value from the second tensor if it exists
-			val keyArrayTensor2 = new Array[String](tensor.typeList.size)
-			var continue = true
-			for (i <- 0 until typeList.size if continue) {
-				val currentTensorDimension = typeList(i)
-				type CurrentDimensionType = currentTensorDimension.DimensionType
-				val currentDimension = dimensions.get(currentTensorDimension).get.asInstanceOf[Dimension[CurrentDimensionType]]
-				val currentDimensionValue = getValue(currentDimension, keySplit(i).toLong).get
-				
-				val dimensionKeyTensor2 = tensor.getSimpleIndex(currentTensorDimension, currentDimensionValue)
-				if (dimensionKeyTensor2.isDefined) {
-				    keyArrayTensor2(tensor.typeList.indexOf(currentTensorDimension)) = dimensionKeyTensor2.get + "_"
-				} else {
-					continue = false
-				}
-			}
-    		// If the dimensions' value association exists in both tensors
-    		if (continue) {
-        		val keyTensor2 = keyArrayTensor2.mkString("")
-        		val valueTensor2 = tensor.values.get(keyTensor2).get
-        		var valueTensor1 = values.get(key).get
-        		
-        		val newValue = valueOperator(valueTensor1, valueTensor2)
-        		// New key
-        		var newKey: String = ""
-    			for (i <- 0 until typeList.size) {
-    				val currentTensorDimension = typeList(i)
-    				type CurrentDimensionType = currentTensorDimension.DimensionType
-    				val currentDimension = dimensions.get(currentTensorDimension).get.asInstanceOf[Dimension[CurrentDimensionType]]
-    				val currentDimensionValue = getValue(currentDimension, keySplit(i).toLong).get
-    				
-    				val newDimensionKey = newTensor.addSimpleIndex(currentTensorDimension, currentDimensionValue)
-    				newKey += newDimensionKey + "_"
-    			}
-    			newTensor.values.put(newKey, newValue)
-    		}
-    	}
+		if (!empty && !tensor.empty) {
+			val columnsName = typeList.map(_.name)
+			newTensor.values = values.withColumnRenamed(Tensor.TENSOR_VALUES_COLUMN_NAME, "value1")
+			        .join(tensor.values.withColumnRenamed(Tensor.TENSOR_VALUES_COLUMN_NAME, "value2"), columnsName)
+			        
+			val u = udf(commonValueOperator.asInstanceOf[(T, T) => T])
+			newTensor.values = newTensor.values
+                    .withColumn(Tensor.TENSOR_VALUES_COLUMN_NAME, u(newTensor.values.col("value1"), newTensor.values.col("value2")))
+			
+			newTensor.values = newTensor.values.drop("value1").drop("value2")
+			newTensor.empty = false
+		}
 		
 		newTensor
     }
@@ -319,129 +384,13 @@ class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: 
      * @return a new tensor, with dimensions in the same order as the current tensor.
      * 
      */
-    def ∩[P2 <: Product, TL2 <: HList, ValueList2 <: HList, ConditionList2 <: HList](tensor: Tensor[P2, T, TL2, ValueList2, ConditionList2])(valueOperator: (T, T) => T)
-            (implicit evT1T2: BasisConstraint[ValueList2, ValueList], evT2T1: BasisConstraint[ValueList, ValueList2]): Tensor[P, T, TL, ValueList, ConditionList] = {
-    	this.intersection(tensor)(valueOperator)
+    def ∩[DL2 <: HList](tensor: Tensor[T, DL2])(commonValueOperator: (T, T) => T)
+    	    (implicit sameSchema: SameSchemaConstraint[DL, DL2], typeTag: TypeTag[T]): Tensor[T, DL] = {
+    	this.intersection(tensor)(commonValueOperator)
     }
     
     /**
-     * Restriction operator for tensor.
-     * Create a tensor dimensions' values of the current tensor that fit tje given dimensions' condition. 
-     * 
-     * @param dimensionsRestriction: the restriction to applied on dimensions' values
-     * 
-     * @return a new tensor, with dimensions in the same order as the current tensor.
-     * 
-     */
-    def restriction[P1 <: Product](dimensionsRestriction: P1)
-            (implicit restrictionConstraint: ContainsDimensionsConditionConstraint[P1, ConditionList]): Tensor[P, T, TL, ValueList, ConditionList] = {
-    	// Initializing the dimensions of the new tensor
-    	var newDimensions = HMap.empty[DimensionMap]
-
-    	for (dimension <- typeList) {
-    		type DimensionType = dimension.DimensionType
-    		val newTensorDimension = dimension.asInstanceOf[TensorDimension[DimensionType]]
-    		val newDimension = dimension.produceDimension().asInstanceOf[Dimension[DimensionType]]
-    		newDimensions = newDimensions + (newTensorDimension -> newDimension)
-    	}
-    	
-    	// Intializing the new tensor
-		val tensor = new Tensor[P, T, TL, ValueList, ConditionList](typeList, newDimensions)
-		
-		// Transforming the product to a Map[TensorDimension[_], Any => Boolean]
-		val dimensionsRestrictionMap = scala.collection.mutable.Map[TensorDimension[_], _ => Boolean]()
-		for (dimensionRestriction <- dimensionsRestriction.productIterator) {
-			dimensionRestriction match {
-    			case (dimension: TensorDimension[_], condition) => {
-    				type DimensionType = dimension.DimensionType
-    				dimensionsRestrictionMap.put(dimension, condition.asInstanceOf[DimensionType => Boolean])
-    			}
-    		}
-        }
-		
-		// Adding values to the new tensor    	
-    	for (key <- values.keys) {
-    		val keySplit = key.split("_")
-    		
-    		// Checking if the key is valid given the dimensions' condition
-    		var validKey = true
-    		for (i <- 0 until typeList.size if validKey) {
-				val currentTensorDimension = typeList(i)
-				type CurrentDimensionType = currentTensorDimension.DimensionType
-				val currentDimension = dimensions.get(currentTensorDimension).get.asInstanceOf[Dimension[CurrentDimensionType]]
-				val currentDimensionValue = getValue(currentDimension, keySplit(i).toLong).get
-				
-				val currentDimensionRestriction = dimensionsRestrictionMap.get(currentTensorDimension)
-				if (currentDimensionRestriction.isDefined) {
-				    validKey = currentDimensionRestriction.get.asInstanceOf[CurrentDimensionType => Boolean](currentDimensionValue.asInstanceOf[CurrentDimensionType])
-				}
-			}
-    		
-    		if (validKey) {
-    			var newKey: String = ""
-    			for (i <- 0 until typeList.size) {
-    				val currentTensorDimension = typeList(i)
-    				type CurrentDimensionType = currentTensorDimension.DimensionType
-    				val currentDimension = dimensions.get(currentTensorDimension).get.asInstanceOf[Dimension[CurrentDimensionType]]
-    				val currentDimensionValue = getValue(currentDimension, keySplit(i).toLong).get
-    				
-    				val newDimensionKey = tensor.addSimpleIndex(currentTensorDimension, currentDimensionValue)
-    				newKey += newDimensionKey + "_"
-    			}
-    			tensor.values.put(newKey, values.get(key).get)
-    		}
-    	}
-		
-		tensor
-    }
-    
-    /**
-     * Selection operator for tensor.
-     * Create a tensor from the values of the current tensor that respect the given condition.
-     * 
-     * @param condition: the function to applied to the tensor's values to determine which to keep
-     * 
-     * @return a new tensor, with dimensions in the same order as the current tensor.
-     * 
-     */
-    def selection(condition: T => Boolean): Tensor[P, T, TL, ValueList, ConditionList] = {
-    	// Initializing the dimensions of the new tensor
-    	var newDimensions = HMap.empty[DimensionMap]
-
-    	for (dimension <- typeList) {
-    		type DimensionType = dimension.DimensionType
-    		val newTensorDimension = dimension.asInstanceOf[TensorDimension[DimensionType]]
-    		val newDimension = dimension.produceDimension().asInstanceOf[Dimension[DimensionType]]
-    		newDimensions = newDimensions + (newTensorDimension -> newDimension)
-    	}
-    	
-    	// Intializing the new tensor
-		val tensor = new Tensor[P, T, TL, ValueList, ConditionList](typeList, newDimensions)(tensorTypeAuthorized)
-		
-		// Adding values to the new tensor
-    	for (key <- values.keys) {
-    		if (condition(values.get(key).get)) {
-        		val keySplit = key.split("_")
-        		
-    			var newKey: String = ""
-    			for (i <- 0 until typeList.size) {
-    				val currentTensorDimension = typeList(i)
-    				type CurrentDimensionType = currentTensorDimension.DimensionType
-    				val currentDimension = dimensions.get(currentTensorDimension).get.asInstanceOf[Dimension[CurrentDimensionType]]
-    				val currentDimensionValue = getValue(currentDimension, keySplit(i).toLong).get
-    				
-    				val newDimensionKey = tensor.addSimpleIndex(currentTensorDimension, currentDimensionValue)
-    				newKey += newDimensionKey + "_"
-    			}
-    			tensor.values.put(newKey, values.get(key).get)
-    		}
-    	}
-		
-		tensor
-    }
-    
-    /**
-     * Natural operator for tensor.
+     * Natural join operator for tensor.
      * Create a tensor that join the entries that have the same dimensions' value for the common dimensions. The new tensor schema
      * is composed of the dimensions of the current tensor to which the dimensions that are only in the second tensor are added.
      * The tensor's values of the first tensor are kept.
@@ -451,14 +400,8 @@ class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: 
      * @return a new tensor, with dimensions of the current and of the second tensor.
      * 
      */
-    def naturalJoin[P2 <: Product, TL2 <: HList, ValueList2 <: HList, ConditionList2 <: HList, 
-    	    POut <: Product, TLOut <: HList, ValueListOut <: HList, ConditionListOut <: HList]
-            (tensor: Tensor[P2, _, TL2, ValueList2, ConditionList2])
-            (implicit commonDimension: ContainsAtLeastOneConstraint[TL, TL2],
-            		newP: UnionProduct[P, P2, POut],
-            		newTL: Union.Aux[TL, TL2, TLOut],
-            		newValueList: Union.Aux[ValueList, ValueList2, ValueListOut],
-            		newConditionList: Union.Aux[ConditionList, ConditionList2, ConditionListOut]): Tensor[POut, T, TLOut, ValueListOut, ConditionListOut] = {
+    def naturalJoin[DL2 <: HList, DLOut <: HList](tensor: Tensor[_, DL2])
+            (implicit commonDimension: ContainsAtLeastOneConstraint[DL, DL2], newTL: Union.Aux[DL, DL2, DLOut]): Tensor[T, DLOut] = {
     	var newDimensions = HMap.empty[DimensionMap]
     	val newTypeList = typeList.union(tensor.typeList).distinct
     	
@@ -470,112 +413,165 @@ class Tensor[P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: 
     	}
     	
     	// Intializing the new tensor
-		val newTensor = new Tensor[POut, T, TLOut, ValueListOut, ConditionListOut](newTypeList, newDimensions)(tensorTypeAuthorized)
+		val newTensor = new Tensor[T, DLOut](newTypeList, newDimensions)(tensorTypeAuthorized)
 		
 		// Adding values to the new tensor
-    	for (key <- values.keys) {
-    		val keySplit = key.split("_")
-    		
-    		// For each entry of the first tensor...
-    		val newKeyArray = new Array[String](newTypeList.size)
-			val dimensionsValue = Map[TensorDimension[_], Any]()
-			for (i <- 0 until typeList.size) {
-				val currentTensorDimension = typeList(i)
-				type CurrentDimensionType = currentTensorDimension.DimensionType
-				val currentDimension = dimensions.get(currentTensorDimension).get.asInstanceOf[Dimension[CurrentDimensionType]]
-				val currentDimensionValue = getValue(currentDimension, keySplit(i).toLong).get.asInstanceOf[CurrentDimensionType]
-				
-				dimensionsValue.put(currentTensorDimension, currentDimensionValue)
-				
-				val newDimensionKey = newTensor.addSimpleIndex(currentTensorDimension, currentDimensionValue)
-				newKeyArray(newTypeList.indexOf(currentTensorDimension)) = newDimensionKey + "_"
-			}
-    		// ...we look for entries of the second tensor having the same values for the common dimensions
-    		for (key2 <- tensor.values.keys) {
-    			val keySplit2 = key2.split("_")
-    			var correspondingDimensionsValue = true
-    			val dimensionsValueToAdd = Map[TensorDimension[_], Any]()
-        		for (i <- 0 until tensor.typeList.size if correspondingDimensionsValue) {
-        			val currentTensorDimension = tensor.typeList(i)
-    				type CurrentDimensionType = currentTensorDimension.DimensionType
-    				val currentDimension = tensor.dimensions.get(currentTensorDimension).get.asInstanceOf[Dimension[CurrentDimensionType]]
-    				val currentDimensionValue = tensor.getValue(currentDimension, keySplit2(i).toLong).get.asInstanceOf[CurrentDimensionType]
-    				
-    				if (dimensionsValue.get(currentTensorDimension).isDefined) {
-    				    correspondingDimensionsValue = 
-    				    	    dimensionsValue.get(currentTensorDimension).get == currentDimensionValue
-    				} else {
-    					dimensionsValueToAdd.put(currentTensorDimension, currentDimensionValue)
-    				}
-        		}
-    			// If the entry has the same values for the common dimensions, it is added to the new tensor
-    			if (correspondingDimensionsValue) {
-    				for ((dimension, value) <- dimensionsValueToAdd.iterator) {
-    					val newDimensionIndex = newTensor.addSimpleIndex(dimension, value)
-    					newKeyArray(newTypeList.indexOf(dimension)) = newDimensionIndex + "_"
-    				}
-        		    newTensor.values.put(newKeyArray.mkString(""), values.get(key).get)
-    			}
-    		}
-    	}
+		val columnsName = typeList.map(_.name).filter(e => tensor.typeList.map(_.name).contains(e))
+		if (!empty && !tensor.empty) {
+		    newTensor.values = values.join(tensor.values.drop(Tensor.TENSOR_VALUES_COLUMN_NAME), columnsName)
+		    newTensor.empty = false
+		}
 		
 		newTensor
     }
     
-	private def addSimpleIndex(dimensionValue: Any): Long = {
-		dimensionValue match {
-			case (dimension: TensorDimension[_], value) => {
-				type DimensionType = dimension.DimensionType
-        		val index = dimensions.get(dimension).get.addValue(value.asInstanceOf[DimensionType])
-        		index
-			}
-		}
-	}
-	
-	private def getSimpleIndex(dimensionValue: Any): Option[Long] = {
-		dimensionValue match {
-			case (dimension: TensorDimension[_], value) => {
-				type DimensionType = dimension.DimensionType
-        		val index = dimensions.get(dimension).get.getIndex(value.asInstanceOf[DimensionType])
-        		if (index.isEmpty) {
-        			None
-        		} else {
-        			Some(index.get)
-        		}
-			}
-		}
-	}
+    /**
+     * Natural join operator for tensor.
+     * Create a tensor that join the entries that have the same dimensions' value for the common dimensions. The new tensor schema
+     * is composed of the dimensions of the current tensor to which the dimensions that are only in the second tensor are added.
+     * The tensor's values of the first tensor are kept.
+     * 
+     * @param tensor: the tensor with which perform the natural join.
+     * 
+     * @return a new tensor, with dimensions of the current and of the second tensor.
+     * 
+     */
+    def ⋈[DL2 <: HList, DLOut <: HList](tensor: Tensor[_, DL2])
+            (implicit commonDimension: ContainsAtLeastOneConstraint[DL, DL2], newDL: Union.Aux[DL, DL2, DLOut]): Tensor[T, DLOut] = {
+    	this.naturalJoin(tensor)
+    }
     
-    private def addIndex(dimensionValue: Any): (TensorDimension[_], Long) = {
-		dimensionValue match {
-			case (dimension: TensorDimension[_], value) => {
-				type DimensionType = dimension.DimensionType
-        		val index = dimensions.get(dimension).get.addValue(value.asInstanceOf[DimensionType])
-        		(dimension, index)
+    /**
+     * Difference operator for tensor.
+     * Create a tensor from the values of the current tensor that are not in the parameter tensor.
+     * The two tensors must have the same dimensions.
+     * 
+     * @param tensor: the tensor with wich to perform the difference
+     * 
+     * @return a new tensor, with dimensions in the same order as the current tensor.
+     * 
+     */
+    def difference[DL2 <: HList](tensor: Tensor[_, DL2])(implicit sameSchema: SameSchemaConstraint[DL, DL2]): Tensor[T, DL] = {
+    	// Initializing the dimensions of the new tensor
+    	var newDimensions = HMap.empty[DimensionMap]
+
+    	for (dimension <- typeList) {
+    		type DimensionType = dimension.DimensionType
+    		val newTensorDimension = dimension.asInstanceOf[TensorDimension[DimensionType]]
+    		val newDimension = dimension.produceDimension().asInstanceOf[Dimension[DimensionType]]
+    		newDimensions = newDimensions + (newTensorDimension -> newDimension)
+    	}
+    	
+    	// Intializing the new tensor
+		val newTensor = new Tensor[T, DL](typeList, newDimensions)(tensorTypeAuthorized)
+		
+		// Adding values to the new tensor
+		if (!empty && !tensor.empty) {
+			newTensor.values = values.drop(Tensor.TENSOR_VALUES_COLUMN_NAME)
+			newTensor.values = newTensor.values.except(tensor.values.drop(Tensor.TENSOR_VALUES_COLUMN_NAME).select(newTensor.values.columns.head, newTensor.values.columns.tail:_*))
+			
+			// Get back the tensor's values
+			val columnsName = typeList.map(_.name)
+			newTensor.values = newTensor.values.join(values, columnsName)
+			newTensor.empty = false
+		} else {
+			if (empty && !tensor.empty) {
+				newTensor.values = tensor.values
+				newTensor.empty = false
 			}
 		}
-	}
-	
-	private def getIndex(dimensionValue: Any): Option[(TensorDimension[_], Long)] = {
-		dimensionValue match {
-			case (dimension: TensorDimension[_], value) => {
-				type DimensionType = dimension.DimensionType
-        		val index = dimensions.get(dimension).get.getIndex(value.asInstanceOf[DimensionType])
-        		if (index.isEmpty) {
-        			None
-        		} else {
-        			Some(dimension, index.get)
-        		}
-			}
+		
+		newTensor
+    }
+    
+    /**
+     * Difference operator for tensor.
+     * Create a tensor from the values of the current tensor that are not in the parameter tensor.
+     * The two tensors must have the same dimensions.
+     * 
+     * @param tensor: the tensor with wich to perform the difference
+     * 
+     * @return a new tensor, with dimensions in the same order as the current tensor.
+     * 
+     */
+    def -[DL2 <: HList](tensor: Tensor[_, DL2])(implicit sameSchema: SameSchemaConstraint[DL, DL2]): Tensor[T, DL] = {
+        this.difference(tensor)
+    }
+    
+    /**
+     * Rename operator for a dimension of the tensor.
+     * Create a tensor with the same values as the current tensor, but with a dimension renamed. The new and
+     * the old dimensions must have the same type.
+     * 
+     * @param oldDimension: the dimension to rename
+     * @param _newDimension: the new dimension to use instead of oldDimension
+     * 
+     * @return a new tensor, with the same values as the current tensor, but with a dimension renamed.
+     */
+    def withDimensionRenamed[OD <: TensorDimension[_], ND <: TensorDimension[_], DLOut <: HList](oldDimension: OD, _newDimension: ND)
+            (implicit sameDimensionType: oldDimension.DimensionType =:= _newDimension.DimensionType,
+            	oldDimensionConstraint: ContainsConstraint[DL, OD],
+                newDimensionConstraint: IsDistinctConstraint[ND :: DL],
+            	newTypeList: Partition.Aux[ND :: DL, OD, OD :: HNil, DLOut]): Tensor[T, DLOut] = {
+    	// Initializing the dimensions of the new tensor
+    	var newDimensions = HMap.empty[DimensionMap]
+
+    	for (dimension <- typeList.filterNot(_ == oldDimension)) {
+    		type DimensionType = dimension.DimensionType
+    		val newTensorDimension = dimension.asInstanceOf[TensorDimension[DimensionType]]
+    		val newDimension = dimension.produceDimension().asInstanceOf[Dimension[DimensionType]]
+    		newDimensions = newDimensions + (newTensorDimension -> newDimension)
+    	}
+    	
+    	type DimensionType = _newDimension.DimensionType
+		val newTensorDimension = _newDimension.asInstanceOf[TensorDimension[DimensionType]]
+		val newDimension = _newDimension.produceDimension().asInstanceOf[Dimension[DimensionType]]
+		newDimensions = newDimensions + (newTensorDimension -> newDimension)
+    	
+    	// Intializing the new tensor
+		val tensor = new Tensor[T, DLOut]((newDimension +: typeList.filterNot(_ == oldDimension)).asInstanceOf[List[TensorDimension[_]]], newDimensions)
+		
+		// Adding values to the new tensor
+		if (!empty) {
+		    tensor.values = values.withColumnRenamed(oldDimension.name, _newDimension.name)
+		    tensor.empty = false
 		}
-	}
-	
-	private def getValue[DT](dimension: Dimension[DT], dimensionValueIndice: Long): Option[DT] = {
-		dimension.getValue(dimensionValueIndice)
-	}
+		
+		tensor
+    }
 }
 
 object Tensor {
+	private val sparkSession: SparkSession = SparkSession.builder().getOrCreate()
+	private val TENSOR_VALUES_COLUMN_NAME: String = "value"
+	
+	/**
+     * Selection operator for tensor.
+     * Create a tensor from the values of the current tensor that respect the given condition.
+     * 
+     * @param condition: the function to applied to the tensor's values to determine which to keep
+     * 
+     * @return a new tensor, with dimensions in the same order as the current tensor.
+     * 
+     */
+    def σ[T, DL <: HList](tensor: Tensor[T, DL])(condition: T => Boolean): Tensor[T, DL] = {
+    	tensor.selection(condition)
+    }
+	
+	/**
+     * Restriction operator for tensor.
+     * Create a tensor dimensions' values of the current tensor that fit the given dimensions' condition. 
+     * 
+     * @param dimensionsRestriction: the restriction to applied on dimensions' values
+     * 
+     * @return a new tensor, with dimensions in the same order as the current tensor.
+     * 
+     */
+    def ρ[P <: Product, T, DL <: HList](tensor: Tensor[T, DL])(dimensionsRestriction: P)
+            (implicit restrictionConstraint: ContainsDimensionsConditionConstraint[DL, P]): Tensor[T, DL] = {
+    	tensor.restriction(dimensionsRestriction)
+    }
+	
 	/**
      * Projection operator for tensor. 
      * Keep only the values that match the given dimension's value, and remove this dimension from the tensor result.
@@ -586,14 +582,9 @@ object Tensor {
      * 
      * @return A tensor with the dimension parameter removed and with only the values that match the parameter value
      */
-	def π[CT, D <: TensorDimension[_], P <: Product, T, TL <: HList, ValueList <: HList, ConditionList <: HList, ValueListOut <: HList, ConditionListOut <: HList, TLOut <: HList, POut <: Product, RLOut <: HList]
-	    (tensor: Tensor[P, T, TL, ValueList, ConditionList])(_dimension: D)(value: CT)
-	    (implicit tensorTypeAuthorized: AuthorizedType[T],
-	    		newTypeList: Partition.Aux[TL, D, D :: HNil, TLOut], 
-	    		newValueList: Partition.Aux[ValueList, (D, CT), (D, CT) :: HNil, ValueListOut],
-	    		newConditionList: Partition.Aux[ConditionList, (D, CT => Boolean), (D, CT => Boolean) :: HNil, ConditionListOut],
-	    		reverse: Reverse.Aux[ValueListOut, RLOut],
-	    		aux: Tupler.Aux[RLOut, POut]): Tensor[POut, T, TLOut, ValueListOut, ConditionListOut] = {
+	def π[CT, D <: TensorDimension[_], T, DL <: HList, DLOut <: HList](tensor: Tensor[T, DL])(_dimension: D)(value: CT)
+	        (implicit newTypeList: Partition.Aux[DL, D, D :: HNil, DLOut], 
+	    	    eq: _dimension.DimensionType =:= CT): Tensor[T, DLOut] = {
 		tensor.projection(_dimension)(value)
 	}
 }

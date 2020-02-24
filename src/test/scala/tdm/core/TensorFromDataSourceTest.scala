@@ -3,6 +3,8 @@ package test.tdm.core
 import java.sql.{Connection, DriverManager}
 import java.util.Properties
 
+import org.apache.spark.sql.SparkSession
+
 import org.scalatest._
 
 import ru.yandex.qatools.embed.postgresql.EmbeddedPostgres
@@ -22,10 +24,18 @@ class TensorFromDataSourceTest extends FlatSpec with Matchers {
     val embeddedPostgres: EmbeddedPostgres = new EmbeddedPostgres(Version.V9_6_11)
     val url: String = embeddedPostgres.start("localhost", port, dbName, user, password)
     
+    val sparkSession = SparkSession.builder().master("local[4]").getOrCreate()
+	sparkSession.sparkContext.setLogLevel("ERROR")
+    
 	"A tensor" should "be built from data source" in {
 		object User extends TensorDimension[String]
     	object Hashtag extends TensorDimension[String]
     	object Time extends TensorDimension[Long]
+		
+		val connectionProperties: Properties = new Properties()
+		connectionProperties.put("url", url)
+		connectionProperties.put("user", user)
+		connectionProperties.put("password", password)
 		
         val connection: Connection = DriverManager.getConnection(url)
         // Data preparation
@@ -59,7 +69,7 @@ class TensorFromDataSourceTest extends FlatSpec with Matchers {
               INNER JOIN hashtag ht ON t.id = ht.tweet_id 
           GROUP BY user_screen_name, hashtag, published_hour
           """
-        val tensor = TensorBuilder[Int](connection)
+        val tensor = TensorBuilder[Int](connectionProperties)
             .addDimension(User, "user")
             .addDimension(Hashtag, "hashtag")
             .addDimension(Time, "time")

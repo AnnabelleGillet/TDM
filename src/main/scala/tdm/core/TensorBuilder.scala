@@ -1,18 +1,18 @@
 package tdm.core
 
 import java.sql.Connection
+import java.util.Properties
 
 import shapeless.ops.hlist.{Reverse, Tupler}
 import shapeless.{HList, HMap, HNil, ::, :+:}
 import shapeless.IsDistinctConstraint
 
-import tdm.`package`
 import tdm._
 
 /**
  * TensorBuilder with one or more defined dimension(s). Can be used to build a tensor.
  */
-class TensorBuilder[T, ValueList <: HList, ConditionList <: HList, TL <: HList] private[core](typeList: List[TensorDimension[_]])
+class TensorBuilder[T, DL <: HList] private[core](typeList: List[TensorDimension[_]])
         (implicit tensorTypeAuthorized: AuthorizedType[T]) {
     import TensorBuilder._
     
@@ -23,10 +23,10 @@ class TensorBuilder[T, ValueList <: HList, ConditionList <: HList, TL <: HList] 
 	 */
     final def addDimension[D <: TensorDimension[_]](dimension: D)
             (implicit typeAuthorized: AuthorizedType[dimension.DimensionType], 
-            		ev: IsDistinctConstraint[(D, dimension.DimensionType) :: ValueList]): 
-            TensorBuilder[T, (D, dimension.DimensionType) :: ValueList, (D, dimension.DimensionType => Boolean) :: ConditionList, D :: TL] = {
+            		ev: IsDistinctConstraint[D :: DL]): 
+            TensorBuilder[T, D :: DL] = {
     	type DT = dimension.DimensionType
-        new TensorBuilder[T, (D, DT) :: ValueList, (D, DT => Boolean) :: ConditionList, D :: TL](typeList :+ dimension)(tensorTypeAuthorized)
+        new TensorBuilder[T, D :: DL](typeList :+ dimension)(tensorTypeAuthorized)
     }
     
     /**
@@ -34,20 +34,20 @@ class TensorBuilder[T, ValueList <: HList, ConditionList <: HList, TL <: HList] 
      * 
      * @return a new tensor.
      */
-    final def build[P <: Product]()(implicit aux: Tupler.Aux[ValueList, P]): Tensor[P, T, TL, ValueList, ConditionList] = {
+    final def build(): Tensor[T, DL] = {
     	var dimensions = HMap.empty[DimensionMap]
     	for (dimension <- typeList) {
     		type DT = dimension.DimensionType
     		dimensions = dimensions + (dimension -> new Dimension[DT]())
     	}
-        new Tensor[P, T, TL, ValueList, ConditionList](typeList, dimensions)
+        new Tensor[T, DL](typeList, dimensions)
     }
 }
 
 /**
  * TensorBuilderFromDataSource with one or more defined dimension(s). Can be used to build a tensor.
  */
-class TensorBuilderFromDataSource[T, ValueList <: HList, ConditionList <: HList, TL <: HList] private[core](connection: Connection, dimensionsName: Map[TensorDimension[_], String], typeList: List[TensorDimension[_]])
+class TensorBuilderFromDataSource[T, DL <: HList] private[core](connectionProperties: Properties, dimensionsName: Map[TensorDimension[_], String], typeList: List[TensorDimension[_]])
         (implicit tensorTypeAuthorized: AuthorizedType[T]) {
     import TensorBuilder._
     
@@ -58,10 +58,10 @@ class TensorBuilderFromDataSource[T, ValueList <: HList, ConditionList <: HList,
 	 */
     final def addDimension[D <: TensorDimension[_]](dimension: D, name: String)
             (implicit typeAuthorized: AuthorizedType[dimension.DimensionType], 
-            		ev: IsDistinctConstraint[(D, dimension.DimensionType) :: ValueList]): 
-            TensorBuilderFromDataSource[T, (D, dimension.DimensionType) :: ValueList, (D, dimension.DimensionType => Boolean) :: ConditionList, D :: TL] = {
+            		ev: IsDistinctConstraint[D :: DL]): 
+            TensorBuilderFromDataSource[T, D :: DL] = {
     	type DT = dimension.DimensionType
-        new TensorBuilderFromDataSource[T, (D, DT) :: ValueList, (D, DT => Boolean) :: ConditionList, D :: TL](connection, dimensionsName + (dimension -> name), typeList :+ dimension)(tensorTypeAuthorized)
+        new TensorBuilderFromDataSource[T, D :: DL](connectionProperties, dimensionsName + (dimension -> name), typeList :+ dimension)(tensorTypeAuthorized)
     }
     
     /**
@@ -69,13 +69,13 @@ class TensorBuilderFromDataSource[T, ValueList <: HList, ConditionList <: HList,
      * 
      * @return a new tensor.
      */
-    final def build[P <: Product](query: String, tensorValueName: String)(implicit aux: Tupler.Aux[ValueList, P]): Tensor[P, T, TL, ValueList, ConditionList] = {
+    final def build(query: String, tensorValueName: String): Tensor[T, DL] = {
     	var dimensions = HMap.empty[DimensionMap]
     	for (dimension <- typeList) {
     		type DT = dimension.DimensionType
     		dimensions = dimensions + (dimension -> new Dimension[DT]())
     	}
-        new Tensor[P, T, TL, ValueList, ConditionList](connection, query, tensorValueName, dimensionsName, typeList, dimensions)
+        new Tensor[/*P, */T, DL](connectionProperties, query, tensorValueName, dimensionsName, typeList, dimensions)
     }
 }
 
@@ -89,24 +89,24 @@ class EmptyTensorBuilder[T] private[core](implicit tensorTypeAuthorized: Authori
 	 * @param dimension: the dimension to add.
 	 */
 	final def addDimension[D <: TensorDimension[_]](dimension: D)
-	        (implicit typeAuthorized: AuthorizedType[dimension.DimensionType]): TensorBuilder[T, (D, dimension.DimensionType) :: HNil, (D, dimension.DimensionType => Boolean) :: HNil, D :: HNil] = {
+	        (implicit typeAuthorized: AuthorizedType[dimension.DimensionType]): TensorBuilder[T, D :: HNil] = {
 		type DT = dimension.DimensionType
-        new TensorBuilder[T, (D, DT) :: HNil, (D, DT => Boolean) :: HNil, D :: HNil](List[TensorDimension[_]](dimension))(tensorTypeAuthorized)
+        new TensorBuilder[T, D :: HNil](List[TensorDimension[_]](dimension))(tensorTypeAuthorized)
     }
 }
 /**
  * TensorBuilderFromDataSource with just the tensor type defined.
  */
-class EmptyTensorBuilderFromDataSource[T] private[core](connection: Connection)(implicit tensorTypeAuthorized: AuthorizedType[T]) {
+class EmptyTensorBuilderFromDataSource[T] private[core](connectionProperties: Properties)(implicit tensorTypeAuthorized: AuthorizedType[T]) {
     /**
 	 * Add a dimension to the tensor builder.
 	 * 
 	 * @param dimension: the dimension to add.
 	 */
 	final def addDimension[D <: TensorDimension[_]](dimension: D, name: String)
-	        (implicit typeAuthorized: AuthorizedType[dimension.DimensionType]): TensorBuilderFromDataSource[T, (D, dimension.DimensionType) :: HNil, (D, dimension.DimensionType => Boolean) :: HNil, D :: HNil] = {
+	        (implicit typeAuthorized: AuthorizedType[dimension.DimensionType]): TensorBuilderFromDataSource[T, D :: HNil] = {
 		type DT = dimension.DimensionType
-        new TensorBuilderFromDataSource[T, (D, DT) :: HNil, (D, DT => Boolean) :: HNil, D :: HNil](connection, Map[TensorDimension[_], String](dimension -> name), List[TensorDimension[_]](dimension))(tensorTypeAuthorized)
+        new TensorBuilderFromDataSource[T, D :: HNil](connectionProperties, Map[TensorDimension[_], String](dimension -> name), List[TensorDimension[_]](dimension))(tensorTypeAuthorized)
     }
 }
 
@@ -124,7 +124,7 @@ object TensorBuilder {
     /**
      * Start the tensor builder with the type of the future tensor.
      */
-    final def apply[T](connection: Connection)(implicit typeAuthorized: AuthorizedType[T]): EmptyTensorBuilderFromDataSource[T] = {
-        new EmptyTensorBuilderFromDataSource[T](connection)
+    final def apply[T](connectionProperties: Properties)(implicit typeAuthorized: AuthorizedType[T]): EmptyTensorBuilderFromDataSource[T] = {
+        new EmptyTensorBuilderFromDataSource[T](connectionProperties)
     }
 }

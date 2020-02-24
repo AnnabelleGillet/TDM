@@ -35,10 +35,6 @@ class DimensionTest extends FlatSpec with Matchers {
 		object Dimension extends TensorDimension[Boolean]
 	}
 	
-	it should "compile with Char" in {
-		object Dimension extends TensorDimension[Char]
-	}
-	
 	it should "compile with String" in {
 		object Dimension extends TensorDimension[String]
 	}

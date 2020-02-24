@@ -12,6 +12,8 @@ import tdm._
  */
 abstract class TensorDimension[T](implicit typeAuthorized: AuthorizedType[T]) {
 	
+	private[core] val name: String = this.getClass.getName.replace(".", "_")
+	
 	type DimensionType = T
 	
 	/**
