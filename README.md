@@ -3,7 +3,7 @@
 # Tensor Data Model
 ## Introduction
 TDM is a prototype aiming at developing the utilization of tensors connected to data sources for Big Data analytics.
-TDM Scala library uses [shapeless](https://github.com/milessabin/shapeless) to provide users with a type-safe implementation that is centered around dimensions' values instead of integer indexes.
+TDM Scala library is based on Spark DataFrames and uses [shapeless](https://github.com/milessabin/shapeless) to provide users with a type-safe implementation that is centered around dimensions' values instead of integer indexes.
 
 The formal definition of the model is described in the following  article [Polystore and Tensor Data Model for Logical Data Independence and Impedance Mismatch in Big Data Analytics](https://link.springer.com/chapter/10.1007/978-3-662-60531-8_3). 
 
@@ -28,11 +28,17 @@ Third, TDM library connects to multiple data sources using a polystore architect
 
 
 # How to use TDM library
-* Put the [jar](https://github.com/AnnabelleGillet/TDM/releases) in the `lib` directory, at the root of your Scala project.
+* Put the jar in the `lib` directory, at the root of your Scala project.
 * Import the TDM functionnalities with 
 ```
 import tdm._
 import tdm.core._
+```
+* Create a Spark session
+```
+import org.apache.spark.sql.SparkSession
+
+SparkSession.builder().master("local[*]").getOrCreate()
 ```
 * Create the tensor dimensions
 ```
@@ -115,7 +121,22 @@ val tensor3 = TensorBuilder[Int]()
     .build()
 tensor.naturalJoin(tensor3)
 ```
+* Difference: remove the elements from the first tensor that are also present in the second tensor
+```
+val tensor2 = TensorBuilder[Int]()
+    .addDimension(User)
+    .addDimension(Hashtag)
+    .addDimension(Time)
+    .build()
+tensor.difference(tensor2)
+```
+* Rename a dimension: replace the phantom type of a dimension by another
+```
+object UserName extends TensorDimension[String]
+tensor.withDimensionRenamed(User, UserName)
+```
 
 # Roadmap
 * Use TDM Library as a backend for machine learning libraries such as TensorFlow, or PyTorch.
 * Develop and optimize tensor operators and algebraic expression over tensors.
+
