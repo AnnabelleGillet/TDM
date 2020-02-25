@@ -8,6 +8,10 @@ import tdm._
 import tdm.core._
 
 class TensorTest extends FlatSpec with Matchers {
+
+	val sparkSession = SparkSession.builder().master("local[4]").getOrCreate()
+	sparkSession.sparkContext.setLogLevel("ERROR")
+
     "A Tensor" should "accept new value" in {
     	object Dimension1 extends TensorDimension[String]
     	object Dimension2 extends TensorDimension[String]

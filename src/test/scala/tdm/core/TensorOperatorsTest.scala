@@ -16,14 +16,15 @@ class TensorOperatorsTest extends FlatSpec with Matchers {
 	object Dimension2 extends TensorDimension[String]
 	object Dimension3 extends TensorDimension[Long]
 	
+	val sparkSession = SparkSession.builder().master("local[4]").getOrCreate()
+	sparkSession.sparkContext.setLogLevel("ERROR")
+
 	val tensor = TensorBuilder[Double]
         .addDimension(Dimension1)
         .addDimension(Dimension2)
         .addDimension(Dimension3)
         .build()
         
-    val sparkSession = SparkSession.builder().master("local[4]").getOrCreate()
-	sparkSession.sparkContext.setLogLevel("ERROR")
     /**
      * Projection
      */
