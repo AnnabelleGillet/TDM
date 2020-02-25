@@ -3,6 +3,7 @@ package test.tdm.core
 import org.scalatest._
 
 import shapeless.test.illTyped
+import org.apache.spark.sql.SparkSession
 
 import tdm._
 import tdm.core._
