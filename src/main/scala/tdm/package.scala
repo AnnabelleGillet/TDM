@@ -51,25 +51,6 @@ package object tdm {
     }
     
     /**
-     * Type class adding an element to an HList and removing another element
-     */
-    /*import shapeless.IsDistinctConstraint
-    import shapeless.ops.hlist.Partition
-    
-    //@implicitNotFound("Dimension not found: tdm.ContainsConstraint[${L} ${U}]. This tensor does not contain dimension of type ${U}.")
-    trait RenameDimensionConstraint[L <: HList, ER, EA] extends Serializable {
-    	type Out <: HList
-    }
-    
-    object RenameDimensionConstraint {
-    	type Aux[L <: HList, ER, EA, Out0 <: HList] = RenameDimensionConstraint[L, ER, EA] { type Out = Out0 }
-
-        def apply[L <: HList, ER, EA, LOut <: HList](implicit newDimensionConstraint: IsDistinctConstraint[EA :: L],
-            	newTypeList: Partition.Aux[EA :: L, ER, ER :: HNil, LOut]): RenameDimensionConstraint[L, ER, EA] = 
-        	new RenameDimensionConstraint[L, ER, EA] { type Out = LOut }
-    }*/
-    
-    /**
      * Type class witnessing that all Dimensions' condition given inside a Product must be contain in the HList.
      */
     import shapeless.{BasisConstraint, IsDistinctConstraint}
@@ -111,8 +92,6 @@ package object tdm {
     trait SameSchemaConstraint[L1 <: HList, L2 <: HList] extends Serializable
 
     object SameSchemaConstraint {
-
-        //def apply[L1 <: HList, L2 <: HList](implicit cc: SameSchemaConstraint[L1, L2]): SameSchemaConstraint[L1, L2] = cc
         
         implicit def hlistContains[L1 <: HList, L2 <: HList](implicit evL1L2: BasisConstraint[L1, L2], evL2L1: BasisConstraint[L2, L1]) =
             new SameSchemaConstraint[L1, L2] {}
@@ -257,17 +236,4 @@ package object tdm {
     		new ZipWithDimensionCondition[H :: T] { type Out = Tuple2[H, CT => Boolean] :: ZwdtOut }
     	}
     }
-    
-    /**
-     * Type class producing an union on 2 Product
-     */
-    import shapeless.ops.hlist.{Tupler, Union}
-    
-    sealed trait UnionProduct[P1 <: Product, P2 <: Product, POut <: Product]
-    
-    implicit def implicitUnionProductAux[P1 <: Product, P2 <: Product, POut <: Product, L1 <: HList, L2 <: HList, LOut <: HList]
-        (implicit productToHlist1: ToHList.Aux[P1, L1],
-        		productToHlist2: ToHList.Aux[P2, L2],
-        		unionHlists: Union.Aux[L1, L2, LOut],
-        		hlistOutToProductOut: Tupler.Aux[LOut, POut]) = new UnionProduct[P1, P2, POut] {}
 }

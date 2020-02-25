@@ -41,48 +41,4 @@ abstract class TensorDimension[T](implicit typeAuthorized: AuthorizedType[T]) {
 /**
  * Internal representation of a tensor dimension.
  */
-private[tdm] class Dimension[T] {
-	private val values = scala.collection.mutable.Map[T, Long]()
-	private val reverseValues = scala.collection.mutable.Map[Long, T]()
-	
-	private val valueToTensorKey = scala.collection.mutable.Map[Long, String]()
-	private var lastIndice: Long = 0
-	
-	/**
-	 * Add a value to this dimension, and return the corresponding index. If the value already exists, return the previous index.
-	 * 
-	 * @param value: The value to add
-	 * 
-	 * @return the index of the added value.
-	 */
-	def addValue(value: T): Long = {
-		if (!values.contains(value)) {
-    		values.put(value, lastIndice)
-    		reverseValues.put(lastIndice, value)
-    		lastIndice += 1
-		}
-		values.get(value).get
-	}
-	
-	/**
-	 * Get the indice for the given value.
-	 * 
-	 * @param value: The value for which to retrieve the index.
-	 * 
-	 * @return Some(Long) corresponding to the value if it exists, None otherwise.
-	 */
-	def getIndex(value: T): Option[Long] = {
-		values.get(value)
-	}
-	
-	/**
-	 * Get the value for the given index.
-	 * 
-	 * @param index: The value for which to retrieve the index.
-	 * 
-	 * @return Some(Long) corresponding to the value if it exists, None otherwise.
-	 */
-	def getValue(index: Long): Option[T] = {
-		reverseValues.get(index)
-	}
-}
+private[tdm] class Dimension[T]
