@@ -1,19 +1,21 @@
-import Dependencies._
-
 ThisBuild / scalaVersion     := "2.12.8"
-ThisBuild / version          := "0.2.0"
+ThisBuild / version          := "0.3.0"
 ThisBuild / organization     := "tdm"
 ThisBuild / organizationName := "tdm"
 
-val sparkVersion = "2.4.4"
+val sparkVersion = "3.0.1"
 
 lazy val root = (project in file("."))
   .settings(
     name := "TDM",
-    libraryDependencies += scalaTest % Test
+    libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.8" % Test
   )
   
-test in assembly := {}  
+test in assembly := {}
+assemblyExcludedJars in assembly := {
+	val cp = (fullClasspath in assembly).value
+	cp filter {_.data.getName != "mulot_2.12-0.3.jar"}
+}
 
 // Shapeless
 resolvers ++= Seq(
@@ -29,9 +31,14 @@ libraryDependencies += "com.chuusai" %% "shapeless" % "2.3.3"
 libraryDependencies += "ru.yandex.qatools.embed" % "postgresql-embedded" % "2.10" % Test
 libraryDependencies += "org.postgresql" % "postgresql" % "42.2.5" % Test
 
+// Breeze
+libraryDependencies += "org.scalanlp" %% "breeze" % "1.1"
+libraryDependencies += "org.scalanlp" %% "breeze-natives" % "1.1"
+
 // Spark
 libraryDependencies += "org.apache.spark" %% "spark-core" % sparkVersion % "provided"
 libraryDependencies += "org.apache.spark" %% "spark-sql" % sparkVersion % "provided"
+libraryDependencies += "org.apache.spark" %% "spark-mllib" % sparkVersion % "provided"
 
 // Coveralls
 

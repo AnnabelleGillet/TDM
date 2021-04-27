@@ -24,7 +24,7 @@ class TensorFromDataSourceTest extends FlatSpec with Matchers {
     val embeddedPostgres: EmbeddedPostgres = new EmbeddedPostgres(Version.V9_6_11)
     val url: String = embeddedPostgres.start("localhost", port, dbName, user, password)
     
-    val sparkSession = SparkSession.builder().master("local[4]").getOrCreate()
+    implicit val sparkSession = SparkSession.builder().master("local[4]").getOrCreate()
 	sparkSession.sparkContext.setLogLevel("ERROR")
     
 	"A tensor" should "be built from data source" in {

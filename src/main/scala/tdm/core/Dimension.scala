@@ -4,10 +4,10 @@ import tdm._
 
 /**
  * Class to extend in order to create a tensor dimension.
- * 
+ *
  * For example:
  * object Dimension1 extends TensorDimension[String]
- * 
+ *
  * Only types Double, Float, Long, Int, Short, Byte, Boolean, Char or String are authorized.
  */
 abstract class TensorDimension[T](implicit typeAuthorized: AuthorizedType[T]) {

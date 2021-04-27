@@ -28,34 +28,52 @@ Third, TDM library connects to multiple data sources using a polystore architect
 
 
 # How to use TDM library
-* Put the jar in the `lib` directory, at the root of your Scala project.
-* Import the TDM functionnalities with 
+* Put the jar in the `lib` directory, at the root of your Scala project, and import the Spark dependencies. For sbt:
+```sbt
+val sparkVersion = "3.0.1"
+
+// Spark
+libraryDependencies += "org.apache.spark" %% "spark-core" % sparkVersion
+libraryDependencies += "org.apache.spark" %% "spark-sql" % sparkVersion
+libraryDependencies += "org.apache.spark" %% "spark-mllib" % sparkVersion
 ```
+* Import the TDM functionnalities with 
+```scala
 import tdm._
 import tdm.core._
 ```
 * Create a Spark session
-```
+```scala
 import org.apache.spark.sql.SparkSession
 
-SparkSession.builder().master("local[*]").getOrCreate()
+implicit val spark = SparkSession.builder().master("local[*]").getOrCreate()
 ```
 * Create the tensor dimensions
-```
+```scala
 object User extends TensorDimension[String]
 object Hashtag extends TensorDimension[String]
 object Time extends TensorDimension[Long]
 ```
 * Ceate the tensor empty
-```
+```scala
 val tensor = TensorBuilder[Int]
 	.addDimension(User)
 	.addDimension(Hashtag)
 	.addDimension(Time)
 	.build()
 ```
-or from a data source
+from a Spark DataFrame
+```scala
+val df: DataFrame = ...
+
+val tensor = TensorBuilder[Int](df)
+    .addDimension(User, "user")
+    .addDimension(Hashtag, "hashtag")
+    .addDimension(Time, "time")
+    .build("value")
 ```
+or from a data source
+```scala
 val query = """
     SELECT user_screen_name AS user, ht.hashtag AS hashtag, published_hour AS time, COUNT(*) AS value 
     FROM tweet t 
@@ -70,30 +88,48 @@ val tensor = TensorBuilder[Int](connection)
 ```
 
 * Manually add values to tensor
-```
+```scala
 tensor.addValue(User.value("u1"), Hashtag.value("ht1"), Time.value(1))(11)
 ```
 
+# Accessing elements of a tensor
+Elements of a tensor can be accessed by first collecting the tensor
+```scala
+val collectedTensor = tensor.collect()
+```
+then, the value of the tensor or of a given dimension can be retrieved
+```scala
+collectedTensor(0) // Get the value of the tensor
+collectedTensor(User, 0) // Get the value of the dimension User
+```
+
+The values of the tensor can be ordered in ascending or descending order
+```scala
+val ascCollectedTensor = collectedTensor.orderByValues()
+val descCollectedTensor = collectedTensor.orderByValuesDesc()
+```
+
 # Available operators
+## Data manipulation
 All operators produce a new tensor and does not modifiy tensors on which the operator is applied.
 
 * Projection: remove the dimension specified, and only keep tensor's elements that match the dimension value
-```
+```scala
 tensor.projection(User)("u1")
 ```
 
 * Restriction: keep tensor's elements which dimensions' value match the given condition(s)
-```
+```scala
 tensor.restriction(User.condition(v => v == "u1"), Hashtag.condition(v => v == "ht1"))
 ```
 
 * Selection: keep tensor's elements which value match the given condition
-```
+```scala
 tensor.selection(v => v > 10)
 ```
 
 * Union: keep all the elements of the 2 tensors, and apply the given function for the common elements
-```
+```scala
 val tensor2 = TensorBuilder[Int]()
     .addDimension(User)
     .addDimension(Hashtag)
@@ -103,7 +139,7 @@ tensor.union(tensor2)((v1, v2) => v1 + v2)
 ```
 
 * Intersection: keep only the common elements between the 2 tensors, and apply the given function for each value
-```
+```scala
 val tensor2 = TensorBuilder[Int]()
     .addDimension(User)
     .addDimension(Hashtag)
@@ -112,17 +148,17 @@ val tensor2 = TensorBuilder[Int]()
 tensor.intersection(tensor2)((v1, v2) => v1 + v2)
 ```
 
-* Natural join: join 2 tensors on their common dimension(s), and keep elements that are present for the common dimension(s) in both tensors
-```
+* Natural join: join 2 tensors on their common dimension(s), and keep elements that are present for the common dimension(s) in both tensors. Apply the given function for each value
+```scala
 object Email extends TensorDimension[String]
 val tensor3 = TensorBuilder[Int]()
     .addDimension(User)
     .addDimension(Email)
     .build()
-tensor.naturalJoin(tensor3)
+tensor.naturalJoin(tensor3)((v1, v2) => v1 + v2)
 ```
 * Difference: remove the elements from the first tensor that are also present in the second tensor
-```
+```scala
 val tensor2 = TensorBuilder[Int]()
     .addDimension(User)
     .addDimension(Hashtag)
@@ -131,12 +167,24 @@ val tensor2 = TensorBuilder[Int]()
 tensor.difference(tensor2)
 ```
 * Rename a dimension: replace the phantom type of a dimension by another
-```
+```scala
 object UserName extends TensorDimension[String]
 tensor.withDimensionRenamed(User, UserName)
 ```
 
+## Decompositions
+### Canonical polyadic (or CANDECOMP/PARAFAC)
+Perform the canonical polyadic decomposition for a given rank. Some optional parameters are also available:
+* nbIterations: the maximum number of iterations
+* norm: the norm to apply on the columns of the factor matrices. The l1 and l2 norms are available
+* minFms: the Factor Match Score limit at which to stop the algorithm. To be performant even at large scale, our decomposition check the convergence by measuring the difference between the factor matrices of two iterations. The minFms set the limit
+* highRank: improve the computation of the pinverse if set to true. By default, is true when rank >= 100
+* computeCorcondia: set to true to compute the core consistency diagnostic ([CORCONDIA](https://analyticalsciencejournals.onlinelibrary.wiley.com/doi/pdf/10.1002/cem.801))
+```scala
+tensor.canonicalPolyadicDecomposition(3)
+```
+
 # Roadmap
-* Use TDM Library as a backend for machine learning libraries such as TensorFlow, or PyTorch.
-* Develop and optimize tensor operators and algebraic expression over tensors.
+* Develop other decompositions.
+* Provide analytics methods based on tensor operations (community detection, centrality, etc.)
 
