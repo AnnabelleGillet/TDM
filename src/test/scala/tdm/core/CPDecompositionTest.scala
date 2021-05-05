@@ -11,18 +11,18 @@ class CPDecompositionTest extends FlatSpec with Matchers {
 	implicit val sparkSession = SparkSession.builder().master("local[4]").getOrCreate()
 	sparkSession.sparkContext.setLogLevel("ERROR")
 	
-	val tensor = TensorBuilder[Double]
+	val tensor = TensorBuilder[Int]
 		.addDimension(Dimension1)
 		.addDimension(Dimension2)
 		.addDimension(Dimension3)
 		.build()
 	
-	tensor.addValue(Dimension1.value("d11"), Dimension2.value("d21"), Dimension3.value(1))(1.0)
-	tensor.addValue(Dimension1.value("d11"), Dimension2.value("d22"), Dimension3.value(1))(15.0)
-	tensor.addValue(Dimension1.value("d11"), Dimension2.value("d21"), Dimension3.value(2))(3.0)
-	tensor.addValue(Dimension1.value("d12"), Dimension2.value("d22"), Dimension3.value(1))(5.0)
-	tensor.addValue(Dimension1.value("d12"), Dimension2.value("d21"), Dimension3.value(1))(2.0)
-	tensor.addValue(Dimension1.value("d12"), Dimension2.value("d22"), Dimension3.value(2))(4.0)
+	tensor.addValue(Dimension1.value("d11"), Dimension2.value("d21"), Dimension3.value(1))(1)
+	tensor.addValue(Dimension1.value("d11"), Dimension2.value("d22"), Dimension3.value(1))(15)
+	tensor.addValue(Dimension1.value("d11"), Dimension2.value("d21"), Dimension3.value(2))(3)
+	tensor.addValue(Dimension1.value("d12"), Dimension2.value("d22"), Dimension3.value(1))(5)
+	tensor.addValue(Dimension1.value("d12"), Dimension2.value("d21"), Dimension3.value(1))(2)
+	tensor.addValue(Dimension1.value("d12"), Dimension2.value("d22"), Dimension3.value(2))(4)
 	
 	"A Tensor" should "run the CP decomposition" in {
 		tensor.canonicalPolyadicDecomposition(3, 1)

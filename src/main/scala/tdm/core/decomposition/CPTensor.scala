@@ -2,6 +2,7 @@ package tdm.core.decomposition
 
 import mulot.Tensor
 import mulot.tensordecomposition.CPALS
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import tdm.core.decomposition.Norm.Norm
 
@@ -43,6 +44,7 @@ private[core] class CPTensor(tensor: Tensor)(implicit spark: SparkSession) {
 
 private[core] object CPTensor {
 	def apply(data: DataFrame, valueColumnName: String = "val")(implicit spark: SparkSession): CPTensor = {
-		new CPTensor(Tensor(data, valueColumnName))
+		new CPTensor(Tensor(data.withColumn(valueColumnName, col(valueColumnName).cast("double")),
+			valueColumnName))
 	}
 }
