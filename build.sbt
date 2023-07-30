@@ -1,9 +1,9 @@
-ThisBuild / scalaVersion     := "2.12.8"
+ThisBuild / scalaVersion     := "2.12.16"
 ThisBuild / version          := "0.5.0"
 ThisBuild / organization     := "tdm"
 ThisBuild / organizationName := "tdm"
 
-val sparkVersion = "3.2.0"
+val sparkVersion = "3.4.1"
 
 lazy val root = (project in file("."))
   .settings(
@@ -29,7 +29,7 @@ libraryDependencies += "com.chuusai" %% "shapeless" % "2.3.3"
 
 // Postgres embedded
 libraryDependencies += "ru.yandex.qatools.embed" % "postgresql-embedded" % "2.10" % Test
-libraryDependencies += "org.postgresql" % "postgresql" % "42.2.5" % Test
+libraryDependencies += "org.postgresql" % "postgresql" % "42.6.0" % Test
 
 // Breeze
 libraryDependencies += "org.scalanlp" %% "breeze" % "1.1"

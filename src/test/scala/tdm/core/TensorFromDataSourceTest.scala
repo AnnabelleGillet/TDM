@@ -10,8 +10,6 @@ import org.scalatest._
 import ru.yandex.qatools.embed.postgresql.EmbeddedPostgres
 import ru.yandex.qatools.embed.postgresql.distribution.Version
 
-import shapeless.test.illTyped
-
 import tdm._
 import tdm.core._
 
