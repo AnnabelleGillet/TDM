@@ -1,14 +1,27 @@
 package tdm.core
 
+import mulot.distributed.tensordecomposition.cp.ALS
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import shapeless.{::, HList, HMap, HNil}
 import tdm.DimensionMap
 
 class KruskalTensor[DL <: HList] private[core] (val typeList: List[TensorDimension[_]],
-												val lambdas: Map[Int, Double],
-												val factorMatrices: Map[String, DataFrame],
-												val corcondia: Option[Double])
+												private val kruskal: ALS#Kruskal,
+												private val tensor: mulot.distributed.Tensor)
 											   (implicit spark: SparkSession) {
+	
+	val factorMatrices = (for (i <- tensor.dimensionsName.indices) yield {
+		var df = spark.createDataFrame(kruskal.A(i).toCoordinateMatrixWithZeros().entries).toDF("dimIndex", Rank.name, tensor.valueColumnName)
+		if (tensor.dimensionsIndex.isDefined) {
+			df = df.join(tensor.dimensionsIndex.get(i), "dimIndex").select("dimValue", Rank.name, tensor.valueColumnName)
+			df = df.withColumnRenamed("dimValue", tensor.dimensionsName(i))
+		} else {
+			df = df.withColumnRenamed("dimIndex", tensor.dimensionsName(i))
+		}
+		tensor.dimensionsName(i) -> df
+	}).toMap
+	val lambdas = kruskal.lambdas.zipWithIndex.map(l => l._2 -> l._1).toMap
+	val corcondia = kruskal.corcondia
 	
 	/**
 	 * Extract a specific dimension result from this [[KruskalTensor]] as a 2-order tensor,
@@ -32,6 +45,6 @@ class KruskalTensor[DL <: HList] private[core] (val typeList: List[TensorDimensi
 	}
 	
 	def reconstruct(): Tensor[Double, DL] = ???
+	
+	object Rank extends TensorDimension[Int]
 }
-
-object Rank extends TensorDimension[Int]

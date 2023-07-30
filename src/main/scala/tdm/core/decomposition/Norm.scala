@@ -1,8 +1,10 @@
 package tdm.core.decomposition
 
+import mulot.core.tensordecomposition.cp.Norms
+
 object Norm extends Enumeration {
-	type Norm = Value
+	type Norm = Norms.Norm
 	
-	val L1 = Value("l1")
-	val L2 = Value("l2")
+	val L1 = Norms.L1
+	val L2 = Norms.L2
 }

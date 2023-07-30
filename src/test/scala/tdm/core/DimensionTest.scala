@@ -82,4 +82,17 @@ class DimensionTest extends FlatSpec with Matchers {
 		  Dimension.value("1.0")
 		  """)
 	}
+	
+	"A TensorDimension value" should "compile when it is an Int" in {
+		object Dimension extends TensorDimension[Double]
+		Dimension.rank(1)
+	}
+	
+	it should "not compile when it is not an Int" in {
+		object Dimension extends TensorDimension[Double]
+		illTyped(
+			"""
+		Dimension.rank("1.0")
+		""")
+	}
 }

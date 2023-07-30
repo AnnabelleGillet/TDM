@@ -84,6 +84,20 @@ package object tdm {
 	 evL1L: BasisConstraint[DLV, L],
 	 evLL1: BasisConstraint[L, DLV],
 	 distinct: IsDistinctConstraint[L]): ContainsAllDimensionsConstraint[DL, P] = new ContainsAllDimensionsConstraint[DL, P] {}
+
+	/**
+	 * Type class witnessing that all Dimensions and ranks given inside a Product must be contain in the HList,
+	 * and that the Product contains all the Dimensions of the HList.
+	 */
+	@implicitNotFound("All dimensions of the tensor must be given once: tdm.ContainsAllDimensionRankConstraint. Dimensions of this tensor: ${DL}, dimensions given: ${P}.")
+	sealed trait ContainsAllDimensionsRankConstraint[DL <: HList, P <: Product]
+	
+	implicit def implicitContainsAllDimensionsRankConstraintAux[DL <: HList, DLV <: HList, P <: Product, L <: HList]
+	(implicit zipWithDimensionRank: ZipWithDimensionRank.Aux[DL, DLV],
+	 productToHlistPL1: ToHList.Aux[P, L],
+	 evL1L: BasisConstraint[DLV, L],
+	 evLL1: BasisConstraint[L, DLV],
+	 distinct: IsDistinctConstraint[L]): ContainsAllDimensionsRankConstraint[DL, P] = new ContainsAllDimensionsRankConstraint[DL, P] {}
 	
 	/**
 	 * Type class witnessing that L1 and L2 have exactly the same elements
@@ -234,6 +248,29 @@ package object tdm {
 		implicit def hconsZipWithDimensionConditionString[CT, H <: TensorDimension[String], T <: HList, ZwdtOut <: HList]
 		(implicit zipWithDimensionCondition: ZipWithDimensionCondition.Aux[T, ZwdtOut], eq: CT =:= String): Aux[H :: T, (H, CT => Boolean) :: ZwdtOut] = {
 			new ZipWithDimensionCondition[H :: T] { type Out = (H, CT => Boolean) :: ZwdtOut }
+		}
+	}
+	
+	/**
+	 * Type class mapping a HList L1 of TensorDimension to a HList L2 of (TensorDimension[CT], Int)
+	 */
+	
+	trait ZipWithDimensionRank[L <: HList] extends Serializable {
+		type Out <: HList
+	}
+	
+	object ZipWithDimensionRank {
+		type Aux[L <: HList, Out0 <: HList] = ZipWithDimensionRank[L] {type Out = Out0}
+		
+		implicit val hnilZipWithDimensionRank: Aux[HNil, HNil] = new ZipWithDimensionRank[HNil] {
+			type Out = HNil
+		}
+		
+		implicit def hconsZipWithDimensionRank[CT, H <: TensorDimension[_], T <: HList, ZwdtOut <: HList]
+		(implicit zipWithDimensionRank: ZipWithDimensionRank.Aux[T, ZwdtOut]): Aux[H :: T, (H, Int) :: ZwdtOut] = {
+			new ZipWithDimensionRank[H :: T] {
+				type Out = (H, Int) :: ZwdtOut
+			}
 		}
 	}
 }

@@ -1,7 +1,6 @@
 package tdm.core
 
 import java.util.Properties
-
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions.{typedLit, udf}
 
@@ -9,10 +8,9 @@ import scala.reflect.runtime.universe.TypeTag
 import shapeless.{::, HList, HMap, HNil}
 import shapeless.IsDistinctConstraint
 import shapeless.ops.hlist.{Partition, Union}
-
 import tdm._
 import tdm.core.Tensor.TENSOR_VALUES_COLUMN_NAME
-import tdm.core.decomposition.{CPTensor, Norm}
+import tdm.core.decomposition.{CPTensor, Norm, TuckerTensor}
 import tdm.core.decomposition.Norm.Norm
 
 class Tensor[T, DL <: HList] private[core]
@@ -47,7 +45,7 @@ class Tensor[T, DL <: HList] private[core]
 	private[core] def this(df: DataFrame, tensorValueName: String, dimensionsName: scala.collection.immutable.Map[TensorDimension[_], String], typeList: List[TensorDimension[_]], dimensions: HMap[DimensionMap])
 						  (implicit spark: SparkSession, tensorTypeAuthorized: Numeric[T]) = {
 		this(typeList, dimensions)
-		values = df
+		values = df.select(tensorValueName, dimensionsName.values.toList: _*)
 		
 		// Convert dimensions' name
 		for ((dimension, name) <- dimensionsName.iterator) {
@@ -573,25 +571,29 @@ class Tensor[T, DL <: HList] private[core]
 	}
 	
 	/**
-	 * Run the CP decomposition for this tensor.
+	 * Set up the CP decomposition for this tensor.
 	 *
 	 * @param rank the rank of the CP decomposition
-	 * @param nbIterations the maximum number of iterations
-	 * @param norm the norm to use on the columns of the factor matrices
-	 * @param minFms the Factor Match Score limit to stop the algorithm
-	 * @param highRank improve the computation of the pinverse if set to true. By default, is true when rank >= 100
-	 * @param computeCorcondia set to true to compute the core consistency diagnostic (CORCONDIA)
-	 * @return A [[KruskalTensor]] containing one tensor per dimension.
-	 *         Each [[Tensor]] has 3 dimensions: one with the values of the original dimension, one with the values of the rank,
-	 *         and the last one with the values found with the CP.
+	 * @return A [[CPTensor]]. Adjust parameters with methods with[...] and execute de decomposition with execute().
 	 */
-	def canonicalPolyadicDecomposition(rank: Int, nbIterations: Int = 25, norm: Norm = Norm.L1,
-									   minFms: Double = 0.99, highRank: Option[Boolean] = None,
-									   computeCorcondia: Boolean = false): KruskalTensor[DL] = {
-		val cpTensor = CPTensor(values, TENSOR_VALUES_COLUMN_NAME)
-		val kruskal = cpTensor.runCPALS(rank, nbIterations, norm, minFms, highRank, computeCorcondia)
-		
-		new KruskalTensor[DL](typeList, kruskal.lambda, kruskal.factorMatrices, kruskal.corcondia)
+	def canonicalPolyadicDecomposition(rank: Int): CPTensor[DL] = {
+		CPTensor(values, rank, typeList, TENSOR_VALUES_COLUMN_NAME)
+	}
+	
+	/**
+	 * Set up the Tucker decomposition for this tensor.
+	 *
+	 * @param ranks the ranks of the Tucker decomposition
+	 * @return A [[TuckerTensor]]. Adjust parameters with methods with[...] and execute de decomposition with execute().
+	 */
+	def tuckerDecomposition[P <: Product](ranksValues: P)
+										 (implicit dimensionsConstraint: ContainsAllDimensionsRankConstraint[DL, P]): TuckerTensor[DL] = {
+		val ranks = (for (dimensionValue <- ranksValues.productIterator) yield {
+			val (dimension: TensorDimension[_], rank) = dimensionValue
+			dimension -> rank.asInstanceOf[Int]
+		}).toMap[TensorDimension[_], Int]
+		val orderedRanks = (for (dimension <- typeList) yield ranks(dimension)).toArray
+		TuckerTensor(values, orderedRanks, typeList, TENSOR_VALUES_COLUMN_NAME)
 	}
 	
 	/**

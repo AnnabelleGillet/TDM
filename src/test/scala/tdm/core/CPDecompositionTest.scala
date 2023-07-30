@@ -25,10 +25,10 @@ class CPDecompositionTest extends FlatSpec with Matchers {
 	tensor.addValue(Dimension1.value("d12"), Dimension2.value("d22"), Dimension3.value(2))(4)
 	
 	"A Tensor" should "run the CP decomposition" in {
-		tensor.canonicalPolyadicDecomposition(3, 1)
+		tensor.canonicalPolyadicDecomposition(3).withMaxIterations(1).execute()
 	}
 	
-	val kruskal = tensor.canonicalPolyadicDecomposition(3, 1)
+	val kruskal = tensor.canonicalPolyadicDecomposition(3).withMaxIterations(1).execute()
 	
 	"The Kruskal Tensor" should "be valid" in {
 		kruskal.lambdas.size shouldBe 3
@@ -39,35 +39,35 @@ class CPDecompositionTest extends FlatSpec with Matchers {
 		val kruskalDimension1 = kruskal.extract(Dimension1)
 		
 		kruskalDimension1.count() shouldBe 3 * 2
-		kruskalDimension1(Dimension1.value("d11"), Rank.value(0)).isDefined shouldBe true
-		kruskalDimension1(Dimension1.value("d11"), Rank.value(1)).isDefined shouldBe true
-		kruskalDimension1(Dimension1.value("d11"), Rank.value(2)).isDefined shouldBe true
-		kruskalDimension1(Dimension1.value("d12"), Rank.value(0)).isDefined shouldBe true
-		kruskalDimension1(Dimension1.value("d12"), Rank.value(1)).isDefined shouldBe true
-		kruskalDimension1(Dimension1.value("d12"), Rank.value(2)).isDefined shouldBe true
+		kruskalDimension1(Dimension1.value("d11"), kruskal.Rank.value(0)).isDefined shouldBe true
+		kruskalDimension1(Dimension1.value("d11"), kruskal.Rank.value(1)).isDefined shouldBe true
+		kruskalDimension1(Dimension1.value("d11"), kruskal.Rank.value(2)).isDefined shouldBe true
+		kruskalDimension1(Dimension1.value("d12"), kruskal.Rank.value(0)).isDefined shouldBe true
+		kruskalDimension1(Dimension1.value("d12"), kruskal.Rank.value(1)).isDefined shouldBe true
+		kruskalDimension1(Dimension1.value("d12"), kruskal.Rank.value(2)).isDefined shouldBe true
 	}
 	
 	it should "contain values for the original dimension 2" in {
 		val kruskalDimension2 = kruskal.extract(Dimension2)
 		
 		kruskalDimension2.count() shouldBe 3 * 2
-		kruskalDimension2(Dimension2.value("d21"), Rank.value(0)).isDefined shouldBe true
-		kruskalDimension2(Dimension2.value("d21"), Rank.value(1)).isDefined shouldBe true
-		kruskalDimension2(Dimension2.value("d21"), Rank.value(2)).isDefined shouldBe true
-		kruskalDimension2(Dimension2.value("d22"), Rank.value(0)).isDefined shouldBe true
-		kruskalDimension2(Dimension2.value("d22"), Rank.value(1)).isDefined shouldBe true
-		kruskalDimension2(Dimension2.value("d22"), Rank.value(2)).isDefined shouldBe true
+		kruskalDimension2(Dimension2.value("d21"), kruskal.Rank.value(0)).isDefined shouldBe true
+		kruskalDimension2(Dimension2.value("d21"), kruskal.Rank.value(1)).isDefined shouldBe true
+		kruskalDimension2(Dimension2.value("d21"), kruskal.Rank.value(2)).isDefined shouldBe true
+		kruskalDimension2(Dimension2.value("d22"), kruskal.Rank.value(0)).isDefined shouldBe true
+		kruskalDimension2(Dimension2.value("d22"), kruskal.Rank.value(1)).isDefined shouldBe true
+		kruskalDimension2(Dimension2.value("d22"), kruskal.Rank.value(2)).isDefined shouldBe true
 	}
 	
 	it should "contain values for the original dimension 3" in {
 		val kruskalDimension3 = kruskal.extract(Dimension3)
 		
 		kruskalDimension3.count() shouldBe 3 * 2
-		kruskalDimension3(Dimension3.value(1), Rank.value(0)).isDefined shouldBe true
-		kruskalDimension3(Dimension3.value(1), Rank.value(1)).isDefined shouldBe true
-		kruskalDimension3(Dimension3.value(1), Rank.value(2)).isDefined shouldBe true
-		kruskalDimension3(Dimension3.value(2), Rank.value(0)).isDefined shouldBe true
-		kruskalDimension3(Dimension3.value(2), Rank.value(1)).isDefined shouldBe true
-		kruskalDimension3(Dimension3.value(2), Rank.value(2)).isDefined shouldBe true
+		kruskalDimension3(Dimension3.value(1), kruskal.Rank.value(0)).isDefined shouldBe true
+		kruskalDimension3(Dimension3.value(1), kruskal.Rank.value(1)).isDefined shouldBe true
+		kruskalDimension3(Dimension3.value(1), kruskal.Rank.value(2)).isDefined shouldBe true
+		kruskalDimension3(Dimension3.value(2), kruskal.Rank.value(0)).isDefined shouldBe true
+		kruskalDimension3(Dimension3.value(2), kruskal.Rank.value(1)).isDefined shouldBe true
+		kruskalDimension3(Dimension3.value(2), kruskal.Rank.value(2)).isDefined shouldBe true
 	}
 }

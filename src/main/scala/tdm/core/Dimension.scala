@@ -31,6 +31,13 @@ abstract class TensorDimension[T](implicit typeAuthorized: AuthorizedType[T]) {
 	}
 	
 	/**
+	 * Create a rank for thie dimension.
+	 */
+	def rank(rank: Int): (this.type, Int) = {
+		(this, rank)
+	}
+	
+	/**
 	 * Produces a new instance of Dimension[T], corresponding to the internal implementation of a TensorDimension[T].
 	 */
 	private[core] def produceDimension(): Dimension[T] = {

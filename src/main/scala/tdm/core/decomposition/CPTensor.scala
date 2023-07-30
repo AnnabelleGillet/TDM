@@ -1,50 +1,99 @@
 package tdm.core.decomposition
 
-import mulot.Tensor
-import mulot.tensordecomposition.CPALS
+import mulot.distributed.Tensor
+import mulot.distributed.tensordecomposition.cp.ALS
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.{DataFrame, SparkSession}
+import shapeless.HList
+import tdm.core.{KruskalTensor, TensorDimension}
 import tdm.core.decomposition.Norm.Norm
 
-private[core] class CPTensor(tensor: Tensor)(implicit spark: SparkSession) {
+private[core] class CPTensor[DL <: HList](tensor: Tensor, rank: Int, typeList: List[TensorDimension[_]])(implicit spark: SparkSession) {
+
+	private var decomposition: ALS = ALS(tensor, rank)
+	
 	/**
-	 * Run the CP decomposition for this tensor.
+	 * The maximal number of iterations to perform before stopping the algorithm if the convergence criteria is not met.
 	 *
-	 * @param rank the rank of the CP decomposition
-	 * @param nbIterations the maximum number of iterations
-	 * @param norm the norm to use on the columns of the factor matrices
-	 * @param minFms the Factor Match Score limit to stop the algorithm
-	 * @param highRank improve the computation of the pinverse if set to true. By default, is true when rank >= 100.
-	 * @param computeCorcondia set to true to compute the core consistency diagnostic (CORCONDIA)
-	 * @return Two [[Map]], one with the lambdas associated to the corresponding rank, and one
-	 *         with the [[String]] name of each dimension of the tensor mapped to a [[DataFrame]].
-	 *         This [[DataFrame]] has 3 columns: one with the values of the original dimension, one with the values of the rank,
-	 *         and the last one with the value found with the CP.
+	 * @param maxIterations the number of iterations
 	 */
-	def runCPALS(rank: Int, nbIterations: Int = 25, norm: Norm = Norm.L1,
-				 minFms: Double = 0.99, highRank: Option[Boolean] = None, computeCorcondia: Boolean = false): CPResult = {
-		val kruskal = CPALS.compute(this.tensor, rank, norm.toString, nbIterations, minFms, highRank, computeCorcondia)
-		
-		val factorMatrices = (for (i <- tensor.dimensionsName.indices) yield {
-			var df = spark.createDataFrame(kruskal.A(i).toCoordinateMatrixWithZeros().entries).toDF("dimIndex", tdm.core.Rank.name, tensor.valueColumnName)
-			if (tensor.dimensionsIndex.isDefined) {
-				df = df.join(tensor.dimensionsIndex.get(i), "dimIndex").select("dimValue", tdm.core.Rank.name, tensor.valueColumnName)
-				df = df.withColumnRenamed("dimValue", tensor.dimensionsName(i))
-			} else {
-				df = df.withColumnRenamed("dimIndex", tensor.dimensionsName(i))
-			}
-			tensor.dimensionsName(i) -> df
-		}).toMap
-		val lambdas = kruskal.lambdas.zipWithIndex.map(l => l._2 -> l._1).toMap
-		CPResult(lambdas, factorMatrices, kruskal.corcondia)
+	def withMaxIterations(nbIterations: Int): this.type = {
+		decomposition = decomposition.withMaxIterations(nbIterations).asInstanceOf[ALS]
+		this
 	}
 	
-	case class CPResult(lambda: Map[Int, Double], factorMatrices: Map[String, DataFrame], corcondia: Option[Double])
+	/**
+	 * The norm to use to normalize the factor matrices.
+	 *
+	 * @param norm the chosen norm
+	 */
+	def withNorm(norm: Norm): this.type = {
+		decomposition = decomposition.withNorm(norm).asInstanceOf[ALS]
+		this
+	}
+	
+	/**
+	 * The Factor Match Score (FMS) is used as convergence criteria to determine when to stop the iteration.
+	 * It represents the similarity between the factor matrices of two iterations, with a value between 0 and 1 (at 0
+	 * the matrices are completely different, and they are the same at 1).
+	 *
+	 * @param minFms the threshold of the FMS at which stopping the iteration
+	 */
+	def withMinFms(minFms: Double): this.type = {
+		decomposition = decomposition.withMinFms(minFms).asInstanceOf[ALS]
+		this
+	}
+	
+	/**
+	 * If the rank of the decomposition is high, allows to optimize it
+	 * in order to accelerate the execution.
+	 *
+	 * @param highRank true to optimize the algorithm with high rank, false otherwise
+	 */
+	def withHighRank(highRank: Boolean): this.type = {
+		decomposition = decomposition.withHighRank(highRank).asInstanceOf[ALS]
+		this
+	}
+	
+	/**
+	 * Choose if CORCONDIA must be computed after the execution of the decomposition.
+	 *
+	 * @param computeCorcondia true to compute CORCONDIA, false otherwise
+	 */
+	def withComputeCorcondia(computeCorcondia: Boolean): this.type = {
+		decomposition = decomposition.withComputeCorcondia(computeCorcondia).asInstanceOf[ALS]
+		this
+	}
+	
+	/**
+	 * Choose which method used to initialize factor matrices.
+	 *
+	 * @param initializer the method to use
+	 */
+	def withInitializer(initializer: Initializers.Intializer): this.type = {
+		initializer match {
+			case Initializers.GAUSSIAN => decomposition = decomposition.withInitializer(ALS.Initializers.gaussian).asInstanceOf[ALS]
+			case Initializers.HOSVD => decomposition = decomposition.withInitializer(ALS.Initializers.hosvd).asInstanceOf[ALS]
+		}
+		this
+	}
+	
+	/**
+	 * Run the CP decomposition for this tensor, with the given parameters.
+	 *
+	 * @return A [[KruskalTensor]] containing one tensor per dimension.
+	 *         Each [[tdm.core.Tensor]] has 3 dimensions: one with the values of the original dimension,
+	 *         one with the values of the rank, and the last one with the values found with the CP.
+	 */
+	def execute(): KruskalTensor[DL] = {
+		val kruskal = decomposition.execute()
+		new KruskalTensor[DL](typeList, kruskal, tensor)
+	}
 }
 
 private[core] object CPTensor {
-	def apply(data: DataFrame, valueColumnName: String = "val")(implicit spark: SparkSession): CPTensor = {
-		new CPTensor(Tensor(data.withColumn(valueColumnName, col(valueColumnName).cast("double")),
-			valueColumnName))
+	def apply[DL <: HList](data: DataFrame, rank: Int, typeList: List[TensorDimension[_]], valueColumnName: String = "val")(implicit spark: SparkSession): CPTensor[DL] = {
+		new CPTensor[DL](Tensor(data.withColumn(valueColumnName, col(valueColumnName).cast("double")),
+			valueColumnName), rank, typeList)
 	}
 }

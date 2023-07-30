@@ -1,9 +1,9 @@
 ThisBuild / scalaVersion     := "2.12.8"
-ThisBuild / version          := "0.3.0"
+ThisBuild / version          := "0.5.0"
 ThisBuild / organization     := "tdm"
 ThisBuild / organizationName := "tdm"
 
-val sparkVersion = "3.0.1"
+val sparkVersion = "3.2.0"
 
 lazy val root = (project in file("."))
   .settings(
@@ -14,7 +14,7 @@ lazy val root = (project in file("."))
 test in assembly := {}
 assemblyExcludedJars in assembly := {
 	val cp = (fullClasspath in assembly).value
-	cp filter {_.data.getName != "mulot_2.12-0.3.jar"}
+	cp filter {_.data.getName != "MuLOT-distributed-assembly-0.5.jar"}
 }
 
 // Shapeless
